@@ -1,49 +1,45 @@
-# SvxLink tests
+# SvxLink virtual-hardware tests
 
-Unit/component tests for SvxLink and the bundled Async framework. They are
-registered with CTest and require no special hardware, network, or sound card.
+Integration tests that run the real `svxlink` binary against generated
+configurations using only virtual hardware — no sound card, no GPIO, no kernel
+modules — so they work on any Linux machine and in CI.
 
-## Running
+## Requirements
 
-```sh
-cmake -S src -B build
-cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure
-```
+* The `svxlink` binary and the logic-core plugins must be built:
 
-The TCL smoke test additionally needs `tclsh` and `python3` (both standard).
+  ```sh
+  cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --target svxlink SimplexLogic RepeaterLogic \
+        ReflectorLogic ReflectorV2Logic -j"$(nproc)"
+  ```
 
-## What is covered
+  The harness looks for `build/bin/svxlink` and `build/lib/*Logic.so` relative
+  to the repository root.
 
-| CTest name | Area | Covers |
-| --- | --- | --- |
-| `CmdParserTest` | svxlink | command match/dispatch (prefix, exact, sub-command) |
-| `DtmfDigitHandlerTest` | svxlink | DTMF command accumulation, anti-flutter, specials |
-| `tcl_event_scripts_load` | svxlink | every TCL event script loads under tclsh |
-| `CommonTest` | misc | common.h: setValueFromString, splitStr, SepPair |
-| `ConfigTest` | async/core | Async::Config get/set, typed coercion, listSection |
-| `AsyncMsgTest` | async/core | Async::Msg pack/unpack: scalars, string, vector, map |
-| `StateMachineTest` | async/core | Async::StateMachine transitions + hierarchical dispatch |
-| `AudioPipeTest` | async/audio | AudioAmp gain, AudioValve open/close, AudioSplitter fan-out |
-| `AudioClipperTest` | async/audio | AudioClipper amplitude clamping |
-| `AudioDelayLineTest` | async/audio | AudioDelayLine delays audio by the configured time |
-| `AudioReaderTest` | async/audio | AudioReader synchronous pull reads |
-| `AudioFilterTest` | async/audio | AudioFilter lowpass/highpass/bandpass response |
-| `AudioFsfTest` | async/audio | AudioFsf frequency sampling filter passband/stopband |
-| `DtmfDecoderTest` | trx | DTMF decode (pre-existing) |
-| `DtmfEncoderTest` | trx | DtmfEncoder -> DtmfDecoder clean round-trip |
-| `GoertzelTest` | trx | single-bin DFT: amplitude recovery, off-bin rejection |
-| `ModulationTest` | trx | modulation fromString/toString round-trip |
-| `TrxFactoryTest` | trx | RxFactory/TxFactory TYPE-driven creation + error cases |
-| `SquelchTest` | trx | SquelchOpen always-open; SquelchVox thresholds |
-| `SigLevDetTest` | trx | SigLevDetConst returns the configured constant level |
-| `EmphasisTest` | trx | pre-emphasis boosts highs; pre+de recovers the signal |
-| `ResamplerTest` | trx | AudioInterpolator x2 / AudioDecimator /2 + round-trip |
-| `ReflectorMsgTest` | reflector | protocol message pack/unpack round-trip |
+* Python 3 (standard library only — no third-party packages).
 
-## Conventions
+## How it works
 
-Each C++ test is a small standalone program that prints `ok`/`FAIL` lines and
-exits 0 on success, 1 on failure — no test framework dependency. Audio-pipe
-tests drive samples through a component and measure the captured output (RMS,
-or per-tone level via a Goertzel filter) to assert frequency/gain behaviour.
+`harness.py` launches `svxlink` against a generated config in a temp dir and
+maps every piece of "hardware" onto something a test driver can control:
+
+| Hardware | Virtualised as |
+| --- | --- |
+| RX audio in | `TYPE=Local`, `AUDIO_DEV=udp:127.0.0.1:<port>` — driver *sends* PCM |
+| TX audio out | `TYPE=Local`, `AUDIO_DEV=udp:127.0.0.1:<port>` — driver *receives* PCM |
+| Squelch | `SQL_DET=VOX` — streaming a tone opens it, silence closes it |
+| DTMF / commands | `DTMF_CTRL_PTY` — driver writes digits (no audio needed) |
+| PTT / TX state | a logic's TX UDP port emits packets only while transmitting |
+| Event scripts | the repo's `src/svxlink/svxlink/*.tcl`, symlinked into the
+  installed `events.tcl` + `events.d/` layout, so the current working tree is
+  exercised |
+
+A logic that transmits emits UDP packets on its TX port; an idle logic emits
+none. Short announcements key the transmitter even without sound packs because
+the announcement procs include `playSilence`/tones; where a specific clip is
+needed the harness writes a throwaway clip with `add_sound_clip()`.
+
+The UDP TX/RX sockets carry raw 16 kHz signed-16-bit mono PCM; the
+measurement helpers are `harness.start_talk` / `stop_talk`,
+`harness.tone_level`, and `harness.goertzel_mag`.
