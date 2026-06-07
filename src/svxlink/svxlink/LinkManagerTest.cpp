@@ -1,13 +1,14 @@
 /**
 @file    LinkManagerTest.cpp
-@brief   Unit tests for the LinkManager audio modes (MIX) driving the routing
-         logic directly without audio.
+@brief   Unit tests for the LinkManager audio modes (MIX/DUCK) driving the
+         routing and gain logic directly without audio.
 @author  Mark Rose
 @date    2026-06-06
 
 These tests construct a LinkManager with lightweight fake logic cores and
 inspect the per-connection valve open/closed state
-(LinkManager::linkValveOpen) to assert the MIX behaviour.
+(LinkManager::linkValveOpen) and mixer-amp gain (LinkManager::linkGain) to
+assert the MIX and DUCK behaviour.
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
@@ -25,6 +26,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <AsyncTimer.h>
 #include <AsyncAudioPassthrough.h>
 
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -50,6 +52,11 @@ void check(bool cond, const string& msg)
   {
     ++failures;
   }
+}
+
+bool near_db(float a, float b, float tol = 0.5f)
+{
+  return std::fabs(a - b) < tol;
 }
 
 
@@ -125,6 +132,31 @@ void test_mix_opens_valves(void)
   teardown(lg);
 }
 
+// DUCK: incoming amp drops to DUCK_LEVEL_DB while the sink squelch is open,
+// and is restored to 0 dB when it closes.
+void test_duck_gain(void)
+{
+  cout << "test_duck_gain" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("L", "DUCK_LEVEL_DB", string("-15"));
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "no duck before squelch opens");
+  lg[0]->squelchStateChanged(true);                  // Logic1 squelch opens
+  check(near_db(lm->linkGain("Logic2", "Logic1"), -15.0f),
+        "Logic2->Logic1 ducked to -15 dB");
+  lg[0]->squelchStateChanged(false);                 // Logic1 squelch closes
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "duck released to 0 dB");
+  teardown(lg);
+}
+
 } /* anonymous namespace */
 
 
@@ -133,6 +165,7 @@ int main(void)
   CppApplication app;
 
   test_mix_opens_valves();
+  test_duck_gain();
 
   cout << endl;
   if (failures == 0)

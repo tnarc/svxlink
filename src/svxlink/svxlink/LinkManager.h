@@ -78,6 +78,7 @@ namespace Async
   class AudioPassthrough;
   class AudioValve;
   class AudioMixer;
+  class AudioAmp;
 };
 class LogicBase;
 
@@ -117,8 +118,9 @@ class LogicBase;
  *
  * FIRST: First source to transmit wins (current behavior)
  * MIX: Mix all active sources together
+ * DUCK: Like MIX but incoming link audio is reduced when local squelch is open
  */
-enum class LinkAudioMode { FIRST, MIX };
+enum class LinkAudioMode { FIRST, MIX, DUCK };
 
 
 /****************************************************************************
@@ -297,13 +299,27 @@ class LinkManager : public sigc::trackable
      * @brief   Check if the mixer valve for a link connection is open
      * @param   src_name  The source logic name
      * @param   sink_name The sink logic name
-     * @return  \em true if the src->sink mixer valve is open (MIX path active),
-     *          \em false if closed (FIRST path or inactive)
+     * @return  \em true if the src->sink mixer valve is open (MIX/DUCK path
+     *          active), \em false if closed (FIRST path or inactive)
      *
      * Introspection helper (used by tests and diagnostics).
      */
     bool linkValveOpen(const std::string& src_name,
                        const std::string& sink_name) const;
+
+    /**
+     * @brief   Get the current gain (dB) applied to a link connection
+     * @param   src_name  The source logic name
+     * @param   sink_name The sink logic name
+     * @return  The gain in dB of the amp on the src->sink mixer path, or NaN
+     *          if no such connection exists
+     *
+     * Introspection helper (used by tests and diagnostics) to read the gain
+     * applied to incoming audio from \a src_name on the mixer path of
+     * \a sink_name. This is where DUCK gain changes are applied.
+     */
+    float linkGain(const std::string& src_name,
+                   const std::string& sink_name) const;
 
   private:
     struct LogicProperties
@@ -319,7 +335,7 @@ class LinkManager : public sigc::trackable
     {
       Link(void)
         : default_active(false), is_activated(false), timeout_timer(0),
-          audio_mode(LinkAudioMode::FIRST) {}
+          audio_mode(LinkAudioMode::FIRST), duck_level_db(-12.0f) {}
       ~Link(void) { delete timeout_timer; }
 
       std::string   name;
@@ -330,6 +346,7 @@ class LinkManager : public sigc::trackable
       bool          is_activated;
       Async::Timer  *timeout_timer;
       LinkAudioMode audio_mode;
+      float         duck_level_db;
     };
     typedef std::map<std::string, Link> LinkMap;
     typedef std::set<std::pair<std::string, std::string> > LogicConSet;
@@ -340,13 +357,15 @@ class LinkManager : public sigc::trackable
     };
     typedef std::map<std::string, Async::AudioPassthrough *> ConMap;
     typedef std::map<std::string, Async::AudioValve *> ValveMap;
+    typedef std::map<std::string, Async::AudioAmp *> AmpMap;
     struct SinkInfo
     {
       Async::AudioSink      *sink;
       Async::AudioSelector  *selector;      // Used in FIRST mode
-      Async::AudioMixer     *mixer;         // Used in MIX mode
+      Async::AudioMixer     *mixer;         // Used in MIX/DUCK mode
       ConMap                connectors;     // Passthroughs for selector
       ValveMap              valves;         // Valves for mixer
+      AmpMap                amps;           // Gain control for DUCK mode
     };
     typedef std::map<std::string, SourceInfo> SourceMap;
     typedef std::map<std::string, SinkInfo>   SinkMap;
@@ -357,6 +376,7 @@ class LinkManager : public sigc::trackable
       sigc::connection  idle_state_changed_con;
       sigc::connection  received_tg_update_con;
       sigc::connection  received_publish_state_event_con;
+      sigc::connection  squelch_state_changed_con;
       bool              is_muted;
     };
     typedef std::map<std::string, LogicInfo> LogicMap;
@@ -394,6 +414,10 @@ class LinkManager : public sigc::trackable
     LinkAudioMode getEffectiveMode(const std::string& src_name,
                                    const std::string& sink_name);
     void updateMixerRouting(void);
+    void onSquelchStateChanged(bool is_open, LogicBase *logic);
+    void updateDuckingForSink(const std::string& sink_name, bool local_squelch_open);
+    float getEffectiveDuckLevel(const std::string& src_name,
+                                const std::string& sink_name);
 
 };  /* class LinkManager */
 
