@@ -290,6 +290,24 @@ proc playMsg {context msg {warn 1}} {
 
 
 #
+# Broadcast the announcement played by the given script to all logic cores
+# (all ports), regardless of the current link state. This makes it possible
+# for listeners on all frequencies to hear an announcement, e.g. when EchoLink
+# is being enabled. The script should play the announcement using the normal
+# playMsg/playFile/playSilence/playTone functions. The audio rendered by this
+# logic core is mirrored onto every other logic core.
+#
+#   body - A TCL script that plays the announcement
+#
+proc announceOnAllLogics {body} {
+  setAnnounceOnAllLogics 1
+  set code [catch {uplevel 1 $body} result options]
+  setAnnounceOnAllLogics 0
+  return -options $options $result
+}
+
+
+#
 # Recursively print the TCL namespace tree
 #
 #   ns      The namespace name

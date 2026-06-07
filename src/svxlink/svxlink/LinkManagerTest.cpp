@@ -1,8 +1,8 @@
 /**
 @file    LinkManagerTest.cpp
-@brief   Unit tests for the LinkManager audio modes (MIX/DUCK/PRIORITY) and
-         PRIORITY_HANGTIME, driving the routing and gain logic directly
-         without audio.
+@brief   Unit tests for the LinkManager audio modes (MIX/DUCK/PRIORITY),
+         PRIORITY_HANGTIME and announce-on-all-logics broadcast routing,
+         driving the routing and gain logic directly without audio.
 @author  Mark Rose
 @date    2026-06-06
 
@@ -10,7 +10,8 @@ These tests construct a LinkManager with lightweight fake logic cores and
 inspect the per-connection valve open/closed state
 (LinkManager::linkValveOpen) and mixer-amp gain (LinkManager::linkGain) to
 assert the MIX, DUCK and PRIORITY behaviour, including the PRIORITY_HANGTIME
-release timing that the audio-level integration tests cannot observe.
+release timing that the audio-level integration tests cannot observe. They
+also verify that broadcast announcements skip ANNOUNCE_ALL_EXCLUDE logics.
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
@@ -76,6 +77,11 @@ class FakeLogic : public LogicBase
     ~FakeLogic(void) override { delete m_in; delete m_out; }
     AudioSink *logicConIn(void) override { return m_in; }
     AudioSource *logicConOut(void) override { return m_out; }
+
+      // Count broadcast playback so tests can assert which logics were reached.
+    void playFile(const std::string&) override { ++files_played; }
+
+    int files_played = 0;
 
   private:
     AudioPassthrough *m_in;
@@ -189,6 +195,27 @@ void test_priority_gain(void)
   teardown(lg);
 }
 
+// Announce-on-all-logics: a broadcast (playFileAll) plays on every logic
+// except the source and any logic with ANNOUNCE_ALL_EXCLUDE set.
+void test_announce_all_exclude(void)
+{
+  cout << "test_announce_all_exclude" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+    // Logic2 opts out of receiving broadcast announcements.
+  cfg.setValue("Logic2", "ANNOUNCE_ALL_EXCLUDE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+    // Broadcast from Logic1.
+  lm->playFileAll(lg[0], "dummy.wav");
+  check(lg[0]->files_played == 0, "source logic is not played to");
+  check(lg[1]->files_played == 0, "ANNOUNCE_ALL_EXCLUDE logic is skipped");
+  check(lg[2]->files_played == 1, "other logic receives the broadcast");
+  teardown(lg);
+}
+
 /**
  * @brief PRIORITY_HANGTIME test - needs the event loop for the timer.
  *
@@ -266,6 +293,7 @@ int main(void)
   test_mix_opens_valves();
   test_duck_gain();
   test_priority_gain();
+  test_announce_all_exclude();
 
     // Event-loop test for hangtime; quits the app when done
   HangtimeTest hangtime;

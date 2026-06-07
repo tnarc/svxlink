@@ -175,12 +175,15 @@ def goertzel_mag(samples, freq, rate):
 
 class SvxlinkHarness:
     def __init__(self, num_logics=3, link_prefix="91", logic_type="Simplex",
-                 links=None, logic_opts=None):
+                 links=None, logic_opts=None, per_logic_opts=None):
         self.num_logics = num_logics
         self.link_prefix = link_prefix
         self.logic_type = logic_type
         # Extra "KEY=VALUE" lines added to every logic section.
         self.logic_opts = logic_opts or {}
+        # Extra "KEY=VALUE" lines added to one named logic section, e.g.
+        # {"Logic2": {"ANNOUNCE_ALL_EXCLUDE": "1"}}.
+        self.per_logic_opts = per_logic_opts or {}
         self.tmp = tempfile.mkdtemp(prefix="svxtest_")
         self.logics = [Logic(f"Logic{i + 1}", self.tmp)
                        for i in range(num_logics)]
@@ -271,6 +274,8 @@ class SvxlinkHarness:
                 "DEFAULT_LANG=en_US",
             ]
             lines += [f"{k}={v}" for k, v in self.logic_opts.items()]
+            lines += [f"{k}={v}"
+                      for k, v in self.per_logic_opts.get(l.name, {}).items()]
             lines.append("")
         for lk in self.links:
             lines += lk.render()

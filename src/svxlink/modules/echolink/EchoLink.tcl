@@ -18,6 +18,29 @@ sourceTclWithOverrides "EchoLinkCommon.tcl"
 
 
 #
+# Executed when the EchoLink module is being activated. The activation
+# announcement is broadcast to all logic cores (all ports) so that listeners
+# on every frequency hear that EchoLink is being enabled.
+#
+proc activating_module {} {
+  announceOnAllLogics {
+    Module::activating_module
+  }
+}
+
+
+#
+# Executed when the EchoLink module is being deactivated. The announcement is
+# broadcast to all logic cores so that listeners on every frequency hear it.
+#
+proc deactivating_module {} {
+  announceOnAllLogics {
+    Module::deactivating_module
+  }
+}
+
+
+#
 # Executed when a request to list all connected stations is received.
 # That is, someone press DTMF "1#" when the EchoLink module is active.
 #

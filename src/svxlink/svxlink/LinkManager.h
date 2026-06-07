@@ -297,6 +297,48 @@ class LinkManager : public sigc::trackable
                   int len);
 
     /**
+     * @brief   Play the given file on all logic cores
+     * @param   src_logic The initiating logic, which will not play the file
+     * @param   path The full path to the file to play
+     *
+     * In contrast to the playFile method, this method will play the file on
+     * all logic cores known to the link manager, regardless of the current
+     * link state. Muted logic cores and the initiating logic are skipped.
+     * This is used to broadcast announcements to every port so that listeners
+     * on all frequencies can hear them.
+     */
+    void playFileAll(LogicBase *src_logic, const std::string& path);
+
+    /**
+     * @brief   Play a length of silence on all logic cores
+     * @param   src_logic The initiating logic, which will not play the silence
+     * @param   length The length, in milliseconds, of silence to play
+     * @see     playFileAll
+     */
+    void playSilenceAll(LogicBase *src_logic, int length);
+
+    /**
+     * @brief   Play a tone with the given properties on all logic cores
+     * @param   src_logic The initiating logic, which will not play the tone
+     * @param   fq The tone frequency
+     * @param   amp The tone amplitude in "milliunits", 1000=full strength
+     * @param   len The length of the tone in milliseconds
+     * @see     playFileAll
+     */
+    void playToneAll(LogicBase *src_logic, int fq, int amp, int len);
+
+    /**
+     * @brief   Play DTMF digits on all logic cores
+     * @param   src_logic The initiating logic, which will not play the digit
+     * @param   digits The DTMF digits to play
+     * @param   amp The amplitude of the individual DTMF tones (0-1000)
+     * @param   len The length in milliseconds of the digit
+     * @see     playFileAll
+     */
+    void playDtmfAll(LogicBase *src_logic, const std::string& digits, int amp,
+                     int len);
+
+    /**
      * @brief   Check if the mixer valve for a link connection is open
      * @param   src_name  The source logic name
      * @param   sink_name The sink logic name

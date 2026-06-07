@@ -465,6 +465,14 @@ Example: EVENT ::playNumber -42.5.
 .RE
 
 Example: COMMAND_PTY=/dev/shm/repeater_logic_ctrl
+.TP
+.B ANNOUNCE_ALL_EXCLUDE
+When set to 1, this logic core is excluded from broadcast announcements sent
+via the announceOnAllLogics TCL helper (for example the link up/down
+announcements). The announcement still plays on the originating logic and on
+all other logic cores that have not set this variable. Useful to keep such
+announcements off, e.g., an EchoLink gateway or a remotely linked logic.
+Default: 0.
 .
 .SS Simplex Logic Section
 .

@@ -105,7 +105,10 @@ add_test(NAME tcl_event_scripts_load
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_tcl_loads.py)
 
-# Integration tests for non-upstream audio modes
+# Integration tests for non-upstream audio modes and announce-on-all-logics
+add_test(NAME announce_on_all_logics
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_announce_all.py)
 add_test(NAME audio_modes
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_audio_modes.py)

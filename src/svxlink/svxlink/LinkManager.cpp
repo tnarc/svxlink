@@ -822,6 +822,67 @@ void LinkManager::playDtmf(LogicBase *src_logic, const std::string& digits, int 
 } /* LinkManager::playDtmf */
 
 
+void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
+{
+  for (LogicMap::const_iterator it = logic_map.begin();
+       it != logic_map.end(); ++it)
+  {
+    LogicBase *logic = it->second.logic;
+    if ((logic != src_logic) && !it->second.is_muted &&
+        !logic->announceAllExcluded())
+    {
+      logic->playFile(path);
+    }
+  }
+} /* LinkManager::playFileAll */
+
+
+void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
+{
+  for (LogicMap::const_iterator it = logic_map.begin();
+       it != logic_map.end(); ++it)
+  {
+    LogicBase *logic = it->second.logic;
+    if ((logic != src_logic) && !it->second.is_muted &&
+        !logic->announceAllExcluded())
+    {
+      logic->playSilence(length);
+    }
+  }
+} /* LinkManager::playSilenceAll */
+
+
+void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
+{
+  for (LogicMap::const_iterator it = logic_map.begin();
+       it != logic_map.end(); ++it)
+  {
+    LogicBase *logic = it->second.logic;
+    if ((logic != src_logic) && !it->second.is_muted &&
+        !logic->announceAllExcluded())
+    {
+      logic->playTone(fq, amp, len);
+    }
+  }
+} /* LinkManager::playToneAll */
+
+
+void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
+                              int amp, int len)
+{
+  for (LogicMap::const_iterator it = logic_map.begin();
+       it != logic_map.end(); ++it)
+  {
+    LogicBase *logic = it->second.logic;
+    if ((logic != src_logic) && !it->second.is_muted &&
+        !logic->announceAllExcluded())
+    {
+      logic->playDtmf(digits, amp, len);
+    }
+  }
+} /* LinkManager::playDtmfAll */
+
+
 bool LinkManager::linkValveOpen(const std::string& src_name,
                                 const std::string& sink_name) const
 {

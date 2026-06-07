@@ -272,6 +272,13 @@ class EventHandler : public sigc::trackable
     sigc::signal<void(const std::string&, int)> injectDtmf;
 
     /**
+     * @brief 	A signal that is emitted when the TCL script want to
+     *	      	enable/disable broadcasting of announcements to all logics
+     * @param 	enable Set to \em true to announce on all logic cores
+     */
+    sigc::signal<void(bool)> setAnnounceOnAllLogics;
+
+    /**
      * @brief 	A signal that is emitted when the TCL script want to set
      *	      	a configuration variable
      * @param 	section The name of the configuration section
@@ -312,6 +319,8 @@ class EventHandler : public sigc::trackable
     static int playDtmfHandler(ClientData cdata, Tcl_Interp *irp,
                     int argc, const char *argv[]);
     static int injectDtmfHandler(ClientData cdata, Tcl_Interp *irp,
+                    int argc, const char *argv[]);
+    static int setAnnounceOnAllLogicsHandler(ClientData cdata, Tcl_Interp *irp,
                     int argc, const char *argv[]);
     static int getConfigValueHandler(ClientData cdata, Tcl_Interp *irp,
                     int argc, const char *argv[]);

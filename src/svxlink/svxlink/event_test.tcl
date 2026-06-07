@@ -19,6 +19,11 @@ proc playSilence {milliseconds} {
 }
 
 
+proc setAnnounceOnAllLogics {enable} {
+  puts "setAnnounceOnAllLogics($enable);";
+}
+
+
 proc reportActiveModuleState {} {
   puts "reportActiveModuleState;";
 }

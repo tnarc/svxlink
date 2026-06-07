@@ -198,6 +198,19 @@ class Logic : public LogicBase
 
     void setReportEventsAsIdle(bool idle) { report_events_as_idle = idle; }
 
+    /**
+     * @brief   Enable/disable broadcasting announcements to all logic cores
+     * @param   enable Set to \em true to announce on all logics
+     *
+     * When enabled, the playFile/playSilence/playTone/playDtmf functions will,
+     * in addition to playing on this logic core, mirror the audio to every
+     * other logic core via the link manager (regardless of link state). This
+     * is used to broadcast announcements to all ports so that listeners on all
+     * frequencies can hear them. Typically toggled from the TCL event handlers
+     * via the announceOnAllLogics helper.
+     */
+    void setAnnounceOnAllLogics(bool enable) { m_announce_on_all_logics = enable; }
+
     bool isWritingMessage(void);
     virtual void setOnline(bool online);
 
@@ -293,6 +306,7 @@ class Logic : public LogicBase
     Async::Timer                    m_ctcss_to_tg_timer;
     float                           m_ctcss_to_tg_last_fq;
     std::string                     m_macro_prefix                {"D"};
+    bool                            m_announce_on_all_logics      {false};
 
     void loadModules(void);
     void loadModule(const std::string& module_name);

@@ -155,6 +155,11 @@ class LogicBase : public Async::Plugin, public sigc::trackable
         return false;
       }
 
+        // When set, this logic core is skipped by broadcast announcements
+        // (announceOnAllLogics), e.g. to keep link up/down announcements off
+        // an EchoLink gateway or a remote-controlled logic.
+      m_cfg->getValue(m_name, "ANNOUNCE_ALL_EXCLUDE", m_announce_all_excluded);
+
       if (LinkManager::hasInstance())
       {
           // Register this logic in the link manager
@@ -167,6 +172,16 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     const std::string& name(void) const { return m_name; }
 
     const std::string& type(void) const { return m_type; }
+
+    /**
+     * @brief   Check if this logic is excluded from broadcast announcements
+     * @return  Returns \em true if this logic core should NOT receive
+     *          announcements broadcast via announceOnAllLogics
+     *
+     * Controlled by the ANNOUNCE_ALL_EXCLUDE configuration variable in the
+     * logic core's config section.
+     */
+    bool announceAllExcluded(void) const { return m_announce_all_excluded; }
 
     /**
      * @brief 	Get the configuration object associated with this logic core
@@ -356,6 +371,7 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     std::string           m_type;
     bool      	      	  m_is_idle       = true;
     uint32_t              m_received_tg   = 0;
+    bool                  m_announce_all_excluded = false;
 
 };  /* class LogicBase */
 
