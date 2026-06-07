@@ -1,37 +1,45 @@
-# SvxLink tests
+# SvxLink virtual-hardware tests
 
-Unit/component tests for SvxLink and the bundled Async framework. They are
-registered with CTest and require no special hardware, network, or sound card.
+Integration tests that run the real `svxlink` binary against generated
+configurations using only virtual hardware — no sound card, no GPIO, no kernel
+modules — so they work on any Linux machine and in CI.
 
-## Running
+## Requirements
 
-```sh
-cmake -S src -B build
-cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure
-```
+* The `svxlink` binary and the logic-core plugins must be built:
 
-The TCL smoke test additionally needs `tclsh` and `python3`. It is left out
-when either is missing.
+  ```sh
+  cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --target svxlink SimplexLogic RepeaterLogic \
+        ReflectorLogic ReflectorV2Logic -j"$(nproc)"
+  ```
 
-## What is covered
+  The harness looks for `build/bin/svxlink` and `build/lib/*Logic.so` relative
+  to the repository root.
 
-Run `ctest --test-dir build -N` to list the tests. The C++ unit tests live
-next to the code they test, named `<Name>Test.cpp`. The TCL smoke test
-(`tcl_event_scripts_load`) sources the event scripts for the Simplex,
-Repeater and Reflector logic types under `tclsh`.
+* Python 3 (standard library only — no third-party packages).
 
-## Adding a test
+## How it works
 
-Drop a new `<Name>Test.cpp` file into a directory that calls
-`svxlink_add_tests()` in its `CMakeLists.txt`. No other file needs to be
-edited. If the test needs extra sources or libraries, declare them in a
-`<Name>Test.deps.cmake` file next to it (see
-`src/cmake/Modules/SvxLinkAddTests.cmake`).
+`harness.py` launches `svxlink` against a generated config in a temp dir and
+maps every piece of "hardware" onto something a test driver can control:
 
-## Conventions
+| Hardware | Virtualised as |
+| --- | --- |
+| RX audio in | `TYPE=Local`, `AUDIO_DEV=udp:127.0.0.1:<port>` — driver *sends* PCM |
+| TX audio out | `TYPE=Local`, `AUDIO_DEV=udp:127.0.0.1:<port>` — driver *receives* PCM |
+| Squelch | `SQL_DET=VOX` — streaming a tone opens it, silence closes it |
+| DTMF / commands | `DTMF_CTRL_PTY` — driver writes digits (no audio needed) |
+| PTT / TX state | a logic's TX UDP port emits packets only while transmitting |
+| Event scripts | the repo's `src/svxlink/svxlink/*.tcl`, symlinked into the
+  installed `events.tcl` + `events.d/` layout, so the current working tree is
+  exercised |
 
-Each C++ test is a small standalone program that prints `ok`/`FAIL` lines and
-exits 0 on success, 1 on failure — no test framework dependency. Audio-pipe
-tests drive samples through a component and measure the captured output (RMS,
-or per-tone level via a Goertzel filter) to assert frequency/gain behaviour.
+A logic that transmits emits UDP packets on its TX port; an idle logic emits
+none. Short announcements key the transmitter even without sound packs because
+the announcement procs include `playSilence`/tones; where a specific clip is
+needed the harness writes a throwaway clip with `add_sound_clip()`.
+
+The UDP TX/RX sockets carry raw 16 kHz signed-16-bit mono PCM; the
+measurement helpers are `harness.start_talk` / `stop_talk`,
+`harness.tone_level`, and `harness.goertzel_mag`.
