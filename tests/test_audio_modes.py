@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tier-2 audio-level tests for the non-upstream LinkManager audio modes:
-AUDIO_MODE = FIRST / MIX / DUCK.
+AUDIO_MODE = FIRST / MIX / DUCK / PRIORITY.
 
 Each test links logics with a given mode, streams distinct sine tones into
 sources (which opens their VOX squelch), captures a listener logic's TX audio
@@ -98,10 +98,37 @@ def test_duck_reduces_incoming_when_local_squelch_opens():
                 f"DUCK should reduce by ~-12 dB, measured {reduction:.1f} dB")
 
 
+def test_priority_mutes_nonpriority_sources():
+    """PRIORITY: while a PRIORITY-link source transmits, a normal source is
+    reduced by ~PRIORITY_MUTE_DB at a shared listener; the priority source is
+    full."""
+    import time
+    links = [
+        LinkSpec("Pri", ["Logic1", "Logic3"], prefix="91", default_active=True,
+                 audio_mode="PRIORITY", priority_mute_db=-20),
+        LinkSpec("Norm", ["Logic2", "Logic3"], prefix="92", default_active=True,
+                 audio_mode="MIX"),
+    ]
+    with _harness(links) as h:
+        h.start_talk("Logic2", F2)               # normal traffic
+        time.sleep(1.0)
+        before = h.tone_level("Logic3", F2)
+        h.start_talk("Logic1", F1)               # priority source keys up
+        time.sleep(1.0)
+        muted = h.tone_level("Logic3", F2)
+        pri = h.tone_level("Logic3", F1)
+        _assert(before > 800, f"normal traffic should be full pre-priority, got {before:.0f}")
+        _assert(pri > 500, f"priority source should be audible, got {pri:.0f}")
+        reduction = _db(muted / before)
+        _assert(-26 < reduction < -14,
+                f"PRIORITY should mute normal by ~-20 dB, measured {reduction:.1f} dB")
+
+
 TESTS = [
     test_mix_carries_all_sources,
     test_first_carries_only_the_first_source,
     test_duck_reduces_incoming_when_local_squelch_opens,
+    test_priority_mutes_nonpriority_sources,
 ]
 
 

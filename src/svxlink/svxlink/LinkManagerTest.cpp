@@ -1,14 +1,14 @@
 /**
 @file    LinkManagerTest.cpp
-@brief   Unit tests for the LinkManager audio modes (MIX/DUCK) driving the
-         routing and gain logic directly without audio.
+@brief   Unit tests for the LinkManager audio modes (MIX/DUCK/PRIORITY)
+         driving the routing and gain logic directly without audio.
 @author  Mark Rose
 @date    2026-06-06
 
 These tests construct a LinkManager with lightweight fake logic cores and
 inspect the per-connection valve open/closed state
 (LinkManager::linkValveOpen) and mixer-amp gain (LinkManager::linkGain) to
-assert the MIX and DUCK behaviour.
+assert the MIX, DUCK and PRIORITY behaviour.
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
@@ -157,6 +157,36 @@ void test_duck_gain(void)
   teardown(lg);
 }
 
+// PRIORITY: a non-priority source is muted to PRIORITY_MUTE_DB while a
+// priority-link source transmits; the priority source stays at 0 dB.
+void test_priority_gain(void)
+{
+  cout << "test_priority_gain" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "normal source full before priority");
+  lg[0]->squelchStateChanged(true);                  // priority source active
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "non-priority muted to -30 dB");
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f),
+        "priority source stays at 0 dB");
+  lg[0]->squelchStateChanged(false);                 // priority stops (no hangtime)
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "non-priority restored immediately (no hangtime)");
+  teardown(lg);
+}
+
 } /* anonymous namespace */
 
 
@@ -166,6 +196,7 @@ int main(void)
 
   test_mix_opens_valves();
   test_duck_gain();
+  test_priority_gain();
 
   cout << endl;
   if (failures == 0)
