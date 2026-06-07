@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tier-2 audio-level tests for the non-upstream LinkManager audio modes:
-AUDIO_MODE = FIRST / MIX.
+AUDIO_MODE = FIRST / MIX / DUCK.
 
 Each test links logics with a given mode, streams distinct sine tones into
 sources (which opens their VOX squelch), captures a listener logic's TX audio
@@ -78,9 +78,30 @@ def test_first_carries_only_the_first_source():
         _assert(f2 < 150, f"FIRST listener must NOT carry the second tone, got f2={f2:.0f}")
 
 
+def test_duck_reduces_incoming_when_local_squelch_opens():
+    """DUCK: incoming link audio drops by ~DUCK_LEVEL_DB while the sink's own
+    squelch is open."""
+    import time
+    links = [LinkSpec("L", ["Logic1", "Logic2", "Logic3"], default_active=True,
+                      audio_mode="DUCK", duck_level_db=-12)]
+    with _harness(links) as h:
+        h.start_talk("Logic2", F2)               # remote station on the link
+        time.sleep(1.0)
+        full = h.tone_level("Logic1", F2, 1.2)   # Logic1 squelch closed
+        h.start_talk("Logic1", FLOCAL)           # local traffic opens Logic1 squelch
+        time.sleep(1.0)
+        ducked = h.tone_level("Logic1", F2, 1.2)
+        _assert(full > 800, f"closed-squelch link audio should be full, got {full:.0f}")
+        _assert(ducked > 0, f"link audio should still be audible (ducked), got {ducked:.0f}")
+        reduction = _db(ducked / full)
+        _assert(-16 < reduction < -8,
+                f"DUCK should reduce by ~-12 dB, measured {reduction:.1f} dB")
+
+
 TESTS = [
     test_mix_carries_all_sources,
     test_first_carries_only_the_first_source,
+    test_duck_reduces_incoming_when_local_squelch_opens,
 ]
 
 

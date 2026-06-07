@@ -70,3 +70,5 @@ streaming distinct sine tones into source logics and measuring per-tone level
 
 * **MIX** — a listener carries every simultaneous source (both tones present)
 * **FIRST** — a second source is ignored while the first is active (one tone)
+* **DUCK** — incoming link audio drops by ~`DUCK_LEVEL_DB` when the sink's own
+  squelch opens (measured to ~-12 dB)
