@@ -19,6 +19,24 @@ modules — so they work on any Linux machine and in CI.
 
 * Python 3 (standard library only — no third-party packages).
 
+## Running
+
+```sh
+python3 tests/test_audio_modes.py      # LinkManager AUDIO_MODE behaviour
+```
+
+Each test exits 0 on success, 1 on failure.
+
+There is also a C++ unit test for `LinkManager` (built with the project):
+
+```sh
+cmake --build build --target LinkManagerTest
+./build/svxlink/svxlink/LinkManagerTest
+```
+
+It drives the gain logic directly (fake logics, no audio) and asserts the
+per-connection valve state and mixer gains for the audio modes.
+
 ## How it works
 
 `harness.py` launches `svxlink` against a generated config in a temp dir and
@@ -43,3 +61,12 @@ needed the harness writes a throwaway clip with `add_sound_clip()`.
 The UDP TX/RX sockets carry raw 16 kHz signed-16-bit mono PCM; the
 measurement helpers are `harness.start_talk` / `stop_talk`,
 `harness.tone_level`, and `harness.goertzel_mag`.
+
+## What is covered (audio-level)
+
+`test_audio_modes.py` exercises the non-upstream `LinkManager` audio modes by
+streaming distinct sine tones into source logics and measuring per-tone level
+(via a Goertzel filter) in a listener's captured TX audio:
+
+* **MIX** — a listener carries every simultaneous source (both tones present)
+* **FIRST** — a second source is ignored while the first is active (one tone)

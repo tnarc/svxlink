@@ -96,8 +96,8 @@ endforeach()
 
 # Unit tests: every *Test.cpp here is auto-registered (see SvxLinkAddTests).
 # Adding a new test = drop in a new *Test.cpp file; no edits needed here.
-# CmdParserTest and DtmfDigitHandlerTest compile an extra source each; those
-# are declared in <Name>.deps.cmake sidecars next to the test.
+# CmdParserTest, DtmfDigitHandlerTest and LinkManagerTest each compile extra
+# sources; those are declared in <Name>.deps.cmake sidecars next to the test.
 svxlink_add_tests(LIBS asynccpp asynccore)
 
 # Smoke test: the TCL event scripts load cleanly under tclsh. Only added
@@ -113,6 +113,11 @@ if(BUILD_TESTING)
       PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 endif()
+
+# Integration tests for non-upstream audio modes
+add_test(NAME audio_modes
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_audio_modes.py)
 
 # Generate config file with correct paths
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/svxlink.conf.in
