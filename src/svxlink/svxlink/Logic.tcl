@@ -389,8 +389,10 @@ proc command_failed {cmd} {
 #
 proc activating_link {name} {
   if {[string length $name] > 0} {
-    playMsg "activating_link_to"
-    spellWord $name
+    announceOnAllLogics {
+      playMsg "activating_link_to"
+      spellWord $name
+    }
   }
 }
 
@@ -401,8 +403,10 @@ proc activating_link {name} {
 #
 proc deactivating_link {name} {
   if {[string length $name] > 0} {
-    playMsg "deactivating_link_to"
-    spellWord $name
+    announceOnAllLogics {
+      playMsg "deactivating_link_to"
+      spellWord $name
+    }
   }
 }
 

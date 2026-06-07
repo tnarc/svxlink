@@ -163,6 +163,8 @@ EventHandler::EventHandler(const string& event_script, const string& logic_name)
                     this, NULL);
   Tcl_CreateCommand(interp, "playDtmf", playDtmfHandler, this, NULL);
   Tcl_CreateCommand(interp, "injectDtmf", injectDtmfHandler, this, NULL);
+  Tcl_CreateCommand(interp, "setAnnounceOnAllLogics",
+                    setAnnounceOnAllLogicsHandler, this, NULL);
   Tcl_CreateCommand(interp, "getConfigValue", getConfigValueHandler,
                     this, NULL);
   Tcl_CreateCommand(interp, "setConfigValue", setConfigValueHandler,
@@ -470,6 +472,22 @@ int EventHandler::injectDtmfHandler(ClientData cdata, Tcl_Interp *irp,
 
   return TCL_OK;
 } /* EventHandler::injectDtmfHandler */
+
+
+int EventHandler::setAnnounceOnAllLogicsHandler(ClientData cdata,
+                    Tcl_Interp *irp, int argc, const char *argv[])
+{
+  if (argc != 2)
+  {
+    static char msg[] = "Usage: setAnnounceOnAllLogics <0|1>";
+    Tcl_SetResult(irp, msg, TCL_STATIC);
+    return TCL_ERROR;
+  }
+  EventHandler *self = static_cast<EventHandler *>(cdata);
+  self->setAnnounceOnAllLogics(atoi(argv[1]) != 0);
+
+  return TCL_OK;
+} /* EventHandler::setAnnounceOnAllLogicsHandler */
 
 
 int EventHandler::getConfigValueHandler(ClientData cdata, Tcl_Interp *irp,

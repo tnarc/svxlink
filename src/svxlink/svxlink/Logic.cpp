@@ -89,7 +89,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "LogicCmds.h"
 #include "Logic.h"
 #include "QsoRecorder.h"
-//#include "LinkManager.h"
+#include "LinkManager.h"
 #include "DtmfDigitHandler.h"
 
 
@@ -643,6 +643,8 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
           mem_fun(*this, &Logic::onPublishStateEvent));
   event_handler->playDtmf.connect(mem_fun(*this, &Logic::playDtmf));
   event_handler->injectDtmf.connect(mem_fun(*this, &Logic::injectDtmf));
+  event_handler->setAnnounceOnAllLogics.connect(
+          mem_fun(*this, &Logic::setAnnounceOnAllLogics));
   event_handler->getConfigValue.connect(
           sigc::mem_fun(*this, &Logic::getConfigValue));
   event_handler->setConfigValue.connect(
@@ -805,6 +807,11 @@ void Logic::playFile(const string& path)
   }
 
   checkIdle();
+
+  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  {
+    LinkManager::instance()->playFileAll(this, path);
+  }
 } /* Logic::playFile */
 
 
@@ -818,6 +825,11 @@ void Logic::playSilence(int length)
   }
 
   checkIdle();
+
+  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  {
+    LinkManager::instance()->playSilenceAll(this, length);
+  }
 } /* Logic::playSilence */
 
 
@@ -831,6 +843,11 @@ void Logic::playTone(int fq, int amp, int len)
   }
 
   checkIdle();
+
+  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  {
+    LinkManager::instance()->playToneAll(this, fq, amp, len);
+  }
 } /* Logic::playSilence */
 
 
@@ -848,6 +865,11 @@ void Logic::playDtmf(const std::string& digits, int amp, int len)
   }
 
   checkIdle();
+
+  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  {
+    LinkManager::instance()->playDtmfAll(this, digits, amp, len);
+  }
 } /* Logic::playDtmf */
 
 

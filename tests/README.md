@@ -22,6 +22,7 @@ modules — so they work on any Linux machine and in CI.
 ## Running
 
 ```sh
+python3 tests/test_announce_all.py     # announce-on-all-logics broadcast
 python3 tests/test_audio_modes.py      # LinkManager AUDIO_MODE behaviour
 ```
 
@@ -63,6 +64,21 @@ needed the harness writes a throwaway clip with `add_sound_clip()`.
 The UDP TX/RX sockets carry raw 16 kHz signed-16-bit mono PCM; the
 measurement helpers are `harness.start_talk` / `stop_talk`,
 `harness.tone_level`, and `harness.goertzel_mag`.
+
+## What is covered (announcements)
+
+`test_announce_all.py`:
+
+* **link up** from one logic → every logic transmits (announcement broadcast)
+* **link down** from one logic → every logic transmits
+* **exclusion**: a logic with `ANNOUNCE_ALL_EXCLUDE=1` is skipped by the
+  broadcast while the originating and other logics still key.
+* **negative control**: a local-only announcement (`link_not_active`, which is
+  *not* wrapped in `announceOnAllLogics`) keys only the originating logic —
+  proving the suite distinguishes "all ports" from "one port".
+
+The `ANNOUNCE_ALL_EXCLUDE` skip is also covered by a `LinkManagerTest` unit
+test (`test_announce_all_exclude`).
 
 ## What is covered (audio-level)
 
