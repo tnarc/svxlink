@@ -1,14 +1,16 @@
 /**
 @file    LinkManagerTest.cpp
-@brief   Unit tests for the LinkManager audio modes (MIX/DUCK/PRIORITY)
-         driving the routing and gain logic directly without audio.
+@brief   Unit tests for the LinkManager audio modes (MIX/DUCK/PRIORITY) and
+         PRIORITY_HANGTIME, driving the routing and gain logic directly
+         without audio.
 @author  Mark Rose
 @date    2026-06-06
 
 These tests construct a LinkManager with lightweight fake logic cores and
 inspect the per-connection valve open/closed state
 (LinkManager::linkValveOpen) and mixer-amp gain (LinkManager::linkGain) to
-assert the MIX, DUCK and PRIORITY behaviour.
+assert the MIX, DUCK and PRIORITY behaviour, including the PRIORITY_HANGTIME
+release timing that the audio-level integration tests cannot observe.
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
@@ -187,6 +189,72 @@ void test_priority_gain(void)
   teardown(lg);
 }
 
+/**
+ * @brief PRIORITY_HANGTIME test - needs the event loop for the timer.
+ *
+ * After the priority source stops, the non-priority source stays muted for
+ * PRIORITY_HANGTIME ms, then is restored.
+ */
+class HangtimeTest : public sigc::trackable
+{
+  public:
+    void run(void)
+    {
+      cout << "test_priority_hangtime" << endl;
+      m_cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+      m_cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+      m_cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+      m_cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+      m_cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+      m_cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+      m_cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+      m_cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+      buildLinks(m_cfg, "Pri,Norm", m_lg);
+      LinkManager* lm = LinkManager::instance();
+
+      lm->instance();
+      m_lg[0]->squelchStateChanged(true);            // priority active
+      check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+            "muted while priority active");
+      m_lg[0]->squelchStateChanged(false);           // priority stops -> hangtime
+      check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+            "still muted at hangtime start");
+
+        // Mid-hangtime check (150 ms < 300 ms): still muted
+      m_mid = new Timer(150);
+      m_mid->expired.connect(sigc::hide(
+          sigc::mem_fun(*this, &HangtimeTest::midHangtime)));
+        // Post-hangtime check (450 ms > 300 ms): restored
+      m_post = new Timer(450);
+      m_post->expired.connect(sigc::hide(
+          sigc::mem_fun(*this, &HangtimeTest::postHangtime)));
+    }
+
+  private:
+    Config m_cfg;
+    FakeLogic* m_lg[3];
+    Timer* m_mid = nullptr;
+    Timer* m_post = nullptr;
+
+    void midHangtime(void)
+    {
+      check(near_db(LinkManager::instance()->linkGain("Logic2", "Logic3"),
+                    -30.0f),
+            "still muted mid-hangtime (150 ms)");
+    }
+
+    void postHangtime(void)
+    {
+      check(near_db(LinkManager::instance()->linkGain("Logic2", "Logic3"),
+                    0.0f),
+            "restored after hangtime (450 ms)");
+      delete m_mid;
+      delete m_post;
+      teardown(m_lg);
+      Application::app().quit();
+    }
+};
+
 } /* anonymous namespace */
 
 
@@ -194,9 +262,15 @@ int main(void)
 {
   CppApplication app;
 
+    // Synchronous tests (no timers needed)
   test_mix_opens_valves();
   test_duck_gain();
   test_priority_gain();
+
+    // Event-loop test for hangtime; quits the app when done
+  HangtimeTest hangtime;
+  hangtime.run();
+  app.exec();
 
   cout << endl;
   if (failures == 0)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tier-2 audio-level tests for the non-upstream LinkManager audio modes:
-AUDIO_MODE = FIRST / MIX / DUCK / PRIORITY.
+AUDIO_MODE = FIRST / MIX / DUCK / PRIORITY, plus PRIORITY_HANGTIME.
 
 Each test links logics with a given mode, streams distinct sine tones into
 sources (which opens their VOX squelch), captures a listener logic's TX audio
@@ -124,11 +124,37 @@ def test_priority_mutes_nonpriority_sources():
                 f"PRIORITY should mute normal by ~-20 dB, measured {reduction:.1f} dB")
 
 
+def test_priority_with_hangtime_still_preempts():
+    """PRIORITY with PRIORITY_HANGTIME configured still preempts normal traffic.
+    (The release-after-hangtime timing is not asserted here: a Simplex sink
+    unkeys once the link audio stops, so the hangtime window can't be observed
+    through captured TX audio. Hangtime release is covered by code review.)"""
+    import time
+    links = [
+        LinkSpec("Pri", ["Logic1", "Logic3"], prefix="91", default_active=True,
+                 audio_mode="PRIORITY", priority_mute_db=-20, priority_hangtime=2000),
+        LinkSpec("Norm", ["Logic2", "Logic3"], prefix="92", default_active=True,
+                 audio_mode="MIX"),
+    ]
+    with _harness(links) as h:
+        h.start_talk("Logic2", F2)
+        time.sleep(1.0)
+        before = h.tone_level("Logic3", F2)
+        h.start_talk("Logic1", F1)
+        time.sleep(1.0)
+        muted = h.tone_level("Logic3", F2)
+        _assert(before > 800, f"normal traffic should be full, got {before:.0f}")
+        _assert(_db(muted / before) < -14,
+                f"PRIORITY+hangtime should still mute normal traffic, "
+                f"measured {_db(muted / before):.1f} dB")
+
+
 TESTS = [
     test_mix_carries_all_sources,
     test_first_carries_only_the_first_source,
     test_duck_reduces_incoming_when_local_squelch_opens,
     test_priority_mutes_nonpriority_sources,
+    test_priority_with_hangtime_still_preempts,
 ]
 
 

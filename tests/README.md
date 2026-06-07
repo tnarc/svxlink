@@ -35,7 +35,9 @@ cmake --build build --target LinkManagerTest
 ```
 
 It drives the gain logic directly (fake logics, no audio) and asserts the
-per-connection valve state and mixer gains for the audio modes.
+per-connection valve state and mixer gains for the audio modes **and** the
+`PRIORITY_HANGTIME` release timing that the Python audio tests cannot observe
+(see limitation below).
 
 ## How it works
 
@@ -75,3 +77,16 @@ streaming distinct sine tones into source logics and measuring per-tone level
 * **PRIORITY** — a normal source is reduced by ~`PRIORITY_MUTE_DB` while a
   PRIORITY-link source transmits (measured to ~-20 dB); the priority source is
   full
+* **PRIORITY_HANGTIME** — preemption still applies with hangtime configured
+
+### Harness limitation worth knowing
+
+A Simplex logic's transmitter only carries *link* audio, so it unkeys as soon
+as the incoming audio stops or is muted to silence. That means transient
+behaviour *after* a source stops — notably the `PRIORITY_HANGTIME` release
+window and "incoming audio restored to full after local traffic ends" — cannot
+be observed through captured TX audio (there is nothing to transmit during the
+quiet window). The Python tests therefore assert steady-state gain (full vs
+reduced) while the sink is kept keyed; the `PRIORITY_HANGTIME` release timing is
+covered instead by the `LinkManagerTest` C++ test, which inspects the gain
+directly and can advance through the hangtime window.
