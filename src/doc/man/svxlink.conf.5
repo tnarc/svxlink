@@ -2532,6 +2532,30 @@ The default in the configuration file is -24. For the tone to be transmitted
 the CTCSS_FQ variable must also be set up and also the TX_CTCSS variable in the
 logic core configuration section.
 .TP
+.B CTCSS_PTT
+Drive an external/hardware CTCSS encoder via a dedicated output line instead of
+(or in addition to) generating the CTCSS tone in audio. Set this to the name of
+a configuration section that is set up exactly like a PTT (PTT_TYPE plus the
+matching pin/line variables, e.g. GPIO, GPIOD, SerialPin or PTY). That output
+is asserted whenever a CTCSS tone should be transmitted and released otherwise,
+i.e. it follows the same TX_CTCSS decision as the audio tone (so, for example,
+scheduled announcements that use the SCHEDULED category do not assert it). Use
+the active-low "!" prefix on the pin/line if the encoder enable input is
+inverted (for example an "encode disable, active high" repeater input).
+
+Example:
+
+  [Tx1]
+  TYPE=Local
+  ...
+  TX_CTCSS=ANNOUNCEMENT
+  CTCSS_PTT=Tx1CtcssEnc
+
+  [Tx1CtcssEnc]
+  PTT_TYPE=GPIOD
+  PTT_GPIOD_CHIP=gpiochip5
+  PTT_GPIOD_LINE=!17
+.TP
 .B PREEMPHASIS
 Enable this feature if you are modulating the FM modulator directly, like
 through a 9k6 packet radio input. If no preemphasis filter is applied to the

@@ -15,7 +15,9 @@ scheduled one does not.
 Run directly:  python3 tests/test_ctcss.py     (exit 0 = pass)
 """
 
+import os
 import sys
+import time
 import traceback
 
 from harness import SvxlinkHarness, goertzel_mag, SAMPLE_RATE
@@ -38,6 +40,20 @@ proc ::${::logic_name}::unknown_command {cmd} {
 def _assert(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def _drain_fd(fd):
+    """Read all currently-available bytes from a non-blocking fd."""
+    out = b""
+    try:
+        while True:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            out += chunk
+    except (BlockingIOError, OSError):
+        pass
+    return out
 
 
 def _announce_ctcss(h, logic):
@@ -82,8 +98,55 @@ def test_scheduled_announcement_suppresses_ctcss():
         h.cleanup()
 
 
+def test_scheduled_announcement_does_not_key_ctcss_encode_line():
+    """The CTCSS encode-enable output line (CTCSS_PTT) is keyed for an ordinary
+    announcement but not for a scheduled one.
+
+    The encode line is configured as a PTT-style PTY output so the test can
+    observe it without real GPIO hardware: PttPty writes 'T' when the line is
+    keyed and 'R' when it is released."""
+    h = SvxlinkHarness(
+        num_logics=2,
+        logic_opts={"TX_CTCSS": "ANNOUNCEMENT"},
+        local_event_tcl={"Logic2.tcl": SCHEDULED_OVERRIDE},
+    )
+    pty1 = os.path.join(h.tmp, "ctcss_enc1")
+    pty2 = os.path.join(h.tmp, "ctcss_enc2")
+    h.per_tx_opts = {"Logic1": {"CTCSS_PTT": "CtcssEnc1"},
+                     "Logic2": {"CTCSS_PTT": "CtcssEnc2"}}
+    h.extra_sections = {"CtcssEnc1": ["PTT_TYPE=PTY", f"PTT_PTY={pty1}"],
+                        "CtcssEnc2": ["PTT_TYPE=PTY", f"PTT_PTY={pty2}"]}
+    h.setup()
+    h.add_sound_clip("en_US", "Core", "unknown_command")
+    h.start()
+    try:
+        fd1 = os.open(pty1, os.O_RDONLY | os.O_NONBLOCK)
+        fd2 = os.open(pty2, os.O_RDONLY | os.O_NONBLOCK)
+        _drain_fd(fd1)            # discard initial/startup line state
+        _drain_fd(fd2)
+
+        h.send_dtmf("Logic1", CMD)   # ordinary announcement -> should key CTCSS
+        h.send_dtmf("Logic2", CMD)   # scheduled announcement -> should not
+        time.sleep(2.5)
+
+        reg = _drain_fd(fd1)
+        sch = _drain_fd(fd2)
+        os.close(fd1)
+        os.close(fd2)
+
+        _assert(b"T" in reg,
+                f"ordinary announcement should key the CTCSS encode line, "
+                f"got {reg!r}")
+        _assert(b"T" not in sch,
+                f"scheduled announcement must NOT key the CTCSS encode line, "
+                f"got {sch!r}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_scheduled_announcement_suppresses_ctcss,
+    test_scheduled_announcement_does_not_key_ctcss_encode_line,
 ]
 
 

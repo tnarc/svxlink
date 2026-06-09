@@ -176,7 +176,8 @@ def goertzel_mag(samples, freq, rate):
 class SvxlinkHarness:
     def __init__(self, num_logics=3, link_prefix="91", logic_type="Simplex",
                  links=None, logic_opts=None, per_logic_opts=None,
-                 tx_opts=None, local_event_tcl=None):
+                 tx_opts=None, local_event_tcl=None, per_tx_opts=None,
+                 extra_sections=None):
         self.num_logics = num_logics
         self.link_prefix = link_prefix
         self.logic_type = logic_type
@@ -191,6 +192,12 @@ class SvxlinkHarness:
         # Local event-script overrides, written to events.d/local/, e.g.
         # {"Logic2.tcl": "proc Logic::unknown_command {cmd} { ... }"}.
         self.local_event_tcl = local_event_tcl or {}
+        # Extra "KEY=VALUE" lines added to one named transmitter section, e.g.
+        # {"Logic2": {"CTCSS_PTT": "CtcssEnc2"}}.
+        self.per_tx_opts = per_tx_opts or {}
+        # Arbitrary extra config sections, e.g.
+        # {"CtcssEnc2": ["PTT_TYPE=PTY", "PTT_PTY=/path"]}.
+        self.extra_sections = extra_sections or {}
         self.tmp = tempfile.mkdtemp(prefix="svxtest_")
         self.logics = [Logic(f"Logic{i + 1}", self.tmp)
                        for i in range(num_logics)]
@@ -275,6 +282,8 @@ class SvxlinkHarness:
                 "AUDIO_CHANNEL=0",
                 "PTT_TYPE=NONE",
                 *[f"{k}={v}" for k, v in self.tx_opts.items()],
+                *[f"{k}={v}"
+                  for k, v in self.per_tx_opts.get(l.name, {}).items()],
                 "",
                 f"[{l.name}]",
                 f"TYPE={self.logic_type}",
@@ -294,6 +303,8 @@ class SvxlinkHarness:
             lines.append("")
         for lk in self.links:
             lines += lk.render()
+        for section, section_lines in self.extra_sections.items():
+            lines += [f"[{section}]", *section_lines, ""]
         with open(self.cfg_path, "w") as f:
             f.write("\n".join(lines))
 

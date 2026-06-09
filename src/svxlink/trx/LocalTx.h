@@ -229,6 +229,7 @@ class LocalTx : public Tx
     std::vector<int>        tone_siglev_map;
     Async::Timer            *ptt_hangtimer;
     Ptt                     *ptt;
+    Ptt                     *ctcss_ptt;
     bool                    fsk_trailer_transmitted;
     char                    last_rx_id;
     bool                    fsk_first_packet_transmitted;
@@ -239,6 +240,7 @@ class LocalTx : public Tx
     
     void txTimeoutOccured(Async::Timer *t);
     bool setPtt(bool tx, bool with_hangtime=false);
+    void updateCtcssPtt(void);
     void transmit(bool do_transmit);
     void allDtmfDigitsSent(void);
     void pttHangtimeExpired(Async::Timer *t);

@@ -83,12 +83,16 @@ test (`test_announce_all_exclude`).
 ## What is covered (CTCSS)
 
 `test_ctcss.py` verifies the SCHEDULED TX_CTCSS category. Two logics are run
-with `TX_CTCSS=ANNOUNCEMENT` and a CTCSS tone configured on the transmitter;
-the same unknown-command announcement is triggered on each, but one logic's
-announcement is overridden to play within the `scheduledAnnouncement` helper.
-The captured TX audio is measured with a Goertzel filter at the CTCSS
-frequency: the ordinary announcement carries the tone, the scheduled one does
-not.
+with `TX_CTCSS=ANNOUNCEMENT`; the same unknown-command announcement is triggered
+on each, but one logic's announcement is overridden to play within the
+`scheduledAnnouncement` helper.
+
+* **audio tone** — with a CTCSS tone configured on the transmitter, the captured
+  TX audio is measured with a Goertzel filter at the CTCSS frequency: the
+  ordinary announcement carries the tone, the scheduled one does not.
+* **encode line** — with a `CTCSS_PTT` encode-enable output configured (as a PTY
+  so it can be observed without GPIO hardware), the line is keyed for the
+  ordinary announcement but not for the scheduled one.
 
 ## What is covered (audio-level)
 
