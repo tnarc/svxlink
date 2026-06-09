@@ -78,10 +78,16 @@ class FakeLogic : public LogicBase
     AudioSink *logicConIn(void) override { return m_in; }
     AudioSource *logicConOut(void) override { return m_out; }
 
-      // Count broadcast playback so tests can assert which logics were reached.
-    void playFile(const std::string&) override { ++files_played; }
+      // Count broadcast playback so tests can assert which logics were reached,
+      // and record the scheduled-announcement classification seen at play time.
+    void playFile(const std::string&) override
+    {
+      ++files_played;
+      saw_scheduled = scheduledAnnouncement();
+    }
 
     int files_played = 0;
+    bool saw_scheduled = false;
 
   private:
     AudioPassthrough *m_in;
@@ -216,6 +222,36 @@ void test_announce_all_exclude(void)
   teardown(lg);
 }
 
+// A scheduled announcement broadcast propagates the scheduled classification
+// to each target (so they suppress CTCSS the same way), and restores the
+// target's state afterwards.
+void test_announce_scheduled_propagation(void)
+{
+  cout << "test_announce_scheduled_propagation" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("Logic2", "ANNOUNCE_ALL_EXCLUDE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+    // Scheduled broadcast from Logic1: Logic3 should play as scheduled.
+  lg[0]->setScheduledAnnouncement(true);
+  lm->playFileAll(lg[0], "dummy.wav");
+  check(lg[2]->files_played == 1 && lg[2]->saw_scheduled,
+        "target plays scheduled when source is scheduled");
+  check(!lg[2]->scheduledAnnouncement(),
+        "target scheduled flag restored after play");
+  check(lg[1]->files_played == 0, "excluded logic still skipped");
+
+    // Non-scheduled broadcast: Logic3 should play as not scheduled.
+  lg[0]->setScheduledAnnouncement(false);
+  lm->playFileAll(lg[0], "dummy.wav");
+  check(lg[2]->files_played == 2 && !lg[2]->saw_scheduled,
+        "target plays non-scheduled when source is not scheduled");
+  teardown(lg);
+}
+
 /**
  * @brief PRIORITY_HANGTIME test - needs the event loop for the timer.
  *
@@ -294,6 +330,7 @@ int main(void)
   test_duck_gain();
   test_priority_gain();
   test_announce_all_exclude();
+  test_announce_scheduled_propagation();
 
     // Event-loop test for hangtime; quits the app when done
   HangtimeTest hangtime;

@@ -800,6 +800,9 @@ void LinkManager::playDtmf(LogicBase *src_logic, const std::string& digits, int 
 
 void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
 {
+    // Mirror the source's scheduled-announcement classification onto each
+    // target so CTCSS is keyed (or suppressed) the same way on every port.
+  const bool sched = src_logic->scheduledAnnouncement();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -807,7 +810,10 @@ void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
     if ((logic != src_logic) && !it->second.is_muted &&
         !logic->announceAllExcluded())
     {
+      const bool prev_sched = logic->scheduledAnnouncement();
+      logic->setScheduledAnnouncement(sched);
       logic->playFile(path);
+      logic->setScheduledAnnouncement(prev_sched);
     }
   }
 } /* LinkManager::playFileAll */
@@ -815,6 +821,7 @@ void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
 
 void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
 {
+  const bool sched = src_logic->scheduledAnnouncement();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -822,7 +829,10 @@ void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
     if ((logic != src_logic) && !it->second.is_muted &&
         !logic->announceAllExcluded())
     {
+      const bool prev_sched = logic->scheduledAnnouncement();
+      logic->setScheduledAnnouncement(sched);
       logic->playSilence(length);
+      logic->setScheduledAnnouncement(prev_sched);
     }
   }
 } /* LinkManager::playSilenceAll */
@@ -830,6 +840,7 @@ void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
 
 void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
 {
+  const bool sched = src_logic->scheduledAnnouncement();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -837,7 +848,10 @@ void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
     if ((logic != src_logic) && !it->second.is_muted &&
         !logic->announceAllExcluded())
     {
+      const bool prev_sched = logic->scheduledAnnouncement();
+      logic->setScheduledAnnouncement(sched);
       logic->playTone(fq, amp, len);
+      logic->setScheduledAnnouncement(prev_sched);
     }
   }
 } /* LinkManager::playToneAll */
@@ -846,6 +860,7 @@ void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
 void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
                               int amp, int len)
 {
+  const bool sched = src_logic->scheduledAnnouncement();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -853,7 +868,10 @@ void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
     if ((logic != src_logic) && !it->second.is_muted &&
         !logic->announceAllExcluded())
     {
+      const bool prev_sched = logic->scheduledAnnouncement();
+      logic->setScheduledAnnouncement(sched);
       logic->playDtmf(digits, amp, len);
+      logic->setScheduledAnnouncement(prev_sched);
     }
   }
 } /* LinkManager::playDtmfAll */

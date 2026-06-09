@@ -306,7 +306,7 @@ commenting out (#) this configuration variable.
 This configuration variable controls if a CTCSS tone should be transmitted.
 Use a comma separated list (no spaces!) to specify when to transmit a CTCSS
 tone. These are the possible values:
-.BR SQL_OPEN ", " LOGIC ", " MODULE ", " ANNOUNCEMENT " or " ALWAYS .
+.BR SQL_OPEN ", " LOGIC ", " MODULE ", " ANNOUNCEMENT ", " SCHEDULED " or " ALWAYS .
 Commenting out this configuration variable will disable CTCSS transmit.
 The tone frequency and level is configured in the transmitter configuration
 section.
@@ -325,7 +325,16 @@ will transmit CTCSS tone when there is incoming traffic from a module.
 .IP \(bu 4
 .BR ANNOUNCEMENT
 will transmit CTCSS tone when an announcement is being played. Repeater idle
-sounds and roger beeps will not have tone sent with them though.
+sounds and roger beeps will not have tone sent with them though. Announcements
+marked as scheduled (see SCHEDULED) are not affected by this value.
+.IP \(bu 4
+.BR SCHEDULED
+will transmit CTCSS tone when a scheduled announcement is being played. An
+announcement is classified as scheduled when it is played from within the
+scheduledAnnouncement TCL helper. This is separate from ANNOUNCEMENT so that,
+for example, periodic/scheduled announcements can be sent without a CTCSS tone
+(omit SCHEDULED) while ordinary announcements still key the tone (keep
+ANNOUNCEMENT).
 .IP \(bu 4
 .BR ALWAYS
 will always transmit a CTCSS tone as soon as the transmitter is turned on.

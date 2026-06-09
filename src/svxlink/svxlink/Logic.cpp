@@ -407,6 +407,10 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
       {
         tx_ctcss_mask |= TX_CTCSS_ANNOUNCEMENT;
       }
+      else if (tx_ctcss_type == "SCHEDULED")
+      {
+        tx_ctcss_mask |= TX_CTCSS_SCHEDULED;
+      }
       else
       {
         cerr << "*** WARNING: Unknown value in configuration variable "
@@ -645,6 +649,8 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
   event_handler->injectDtmf.connect(mem_fun(*this, &Logic::injectDtmf));
   event_handler->setAnnounceOnAllLogics.connect(
           mem_fun(*this, &Logic::setAnnounceOnAllLogics));
+  event_handler->setScheduledAnnouncement.connect(
+          mem_fun(*this, &LogicBase::setScheduledAnnouncement));
   event_handler->getConfigValue.connect(
           sigc::mem_fun(*this, &Logic::getConfigValue));
   event_handler->setConfigValue.connect(
@@ -803,7 +809,8 @@ void Logic::playFile(const string& path)
 
   if (!msg_handler->isIdle())
   {
-    updateTxCtcss(true, TX_CTCSS_ANNOUNCEMENT);
+    updateTxCtcss(true, scheduledAnnouncement() ?
+                  TX_CTCSS_SCHEDULED : TX_CTCSS_ANNOUNCEMENT);
   }
 
   checkIdle();
@@ -821,7 +828,8 @@ void Logic::playSilence(int length)
 
   if (!msg_handler->isIdle())
   {
-    updateTxCtcss(true, TX_CTCSS_ANNOUNCEMENT);
+    updateTxCtcss(true, scheduledAnnouncement() ?
+                  TX_CTCSS_SCHEDULED : TX_CTCSS_ANNOUNCEMENT);
   }
 
   checkIdle();
@@ -839,7 +847,8 @@ void Logic::playTone(int fq, int amp, int len)
 
   if (!msg_handler->isIdle())
   {
-    updateTxCtcss(true, TX_CTCSS_ANNOUNCEMENT);
+    updateTxCtcss(true, scheduledAnnouncement() ?
+                  TX_CTCSS_SCHEDULED : TX_CTCSS_ANNOUNCEMENT);
   }
 
   checkIdle();
@@ -861,7 +870,8 @@ void Logic::playDtmf(const std::string& digits, int amp, int len)
 
   if (!msg_handler->isIdle())
   {
-    updateTxCtcss(true, TX_CTCSS_ANNOUNCEMENT);
+    updateTxCtcss(true, scheduledAnnouncement() ?
+                  TX_CTCSS_SCHEDULED : TX_CTCSS_ANNOUNCEMENT);
   }
 
   checkIdle();
@@ -1363,6 +1373,7 @@ void Logic::allMsgsWritten(void)
   }
 
   updateTxCtcss(false, TX_CTCSS_ANNOUNCEMENT);
+  updateTxCtcss(false, TX_CTCSS_SCHEDULED);
   checkIdle();
 
 } /* Logic::allMsgsWritten */
