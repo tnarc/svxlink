@@ -112,6 +112,9 @@ add_test(NAME announce_on_all_logics
 add_test(NAME audio_modes
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_audio_modes.py)
+add_test(NAME ctcss
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_ctcss.py)
 
 # Generate config file with correct paths
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/svxlink.conf.in

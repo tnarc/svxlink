@@ -80,6 +80,16 @@ measurement helpers are `harness.start_talk` / `stop_talk`,
 The `ANNOUNCE_ALL_EXCLUDE` skip is also covered by a `LinkManagerTest` unit
 test (`test_announce_all_exclude`).
 
+## What is covered (CTCSS)
+
+`test_ctcss.py` verifies the SCHEDULED TX_CTCSS category. Two logics are run
+with `TX_CTCSS=ANNOUNCEMENT` and a CTCSS tone configured on the transmitter;
+the same unknown-command announcement is triggered on each, but one logic's
+announcement is overridden to play within the `scheduledAnnouncement` helper.
+The captured TX audio is measured with a Goertzel filter at the CTCSS
+frequency: the ordinary announcement carries the tone, the scheduled one does
+not.
+
 ## What is covered (audio-level)
 
 `test_audio_modes.py` exercises the non-upstream `LinkManager` audio modes by

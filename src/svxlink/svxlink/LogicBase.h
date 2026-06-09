@@ -184,6 +184,28 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     bool announceAllExcluded(void) const { return m_announce_all_excluded; }
 
     /**
+     * @brief   Mark subsequent announcements on this logic as "scheduled"
+     * @param   enable Set to \em true while playing a scheduled announcement
+     *
+     * While set, announcements played by this logic core are classified as
+     * scheduled, which affects CTCSS handling (see the SCHEDULED value of the
+     * TX_CTCSS configuration variable). Typically toggled from the TCL event
+     * handlers via the scheduledAnnouncement helper. Held here in LogicBase so
+     * that the LinkManager can propagate the classification to the other ports
+     * when a scheduled announcement is broadcast via announceOnAllLogics.
+     */
+    void setScheduledAnnouncement(bool enable)
+    {
+      m_scheduled_announcement = enable;
+    }
+
+    /**
+     * @brief   Check if announcements are currently classified as scheduled
+     * @return  Returns \em true if a scheduled announcement is in progress
+     */
+    bool scheduledAnnouncement(void) const { return m_scheduled_announcement; }
+
+    /**
      * @brief 	Get the configuration object associated with this logic core
      * @return	Returns the configuration object associated with this logic core
      */
@@ -372,6 +394,7 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     bool      	      	  m_is_idle       = true;
     uint32_t              m_received_tg   = 0;
     bool                  m_announce_all_excluded = false;
+    bool                  m_scheduled_announcement = false;
 
 };  /* class LogicBase */
 

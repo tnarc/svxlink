@@ -279,6 +279,13 @@ class EventHandler : public sigc::trackable
     sigc::signal<void(bool)> setAnnounceOnAllLogics;
 
     /**
+     * @brief 	A signal that is emitted when the TCL script wants to mark
+     *	      	subsequent announcements as scheduled (for CTCSS handling)
+     * @param 	enable Set to \em true while a scheduled announcement is played
+     */
+    sigc::signal<void(bool)> setScheduledAnnouncement;
+
+    /**
      * @brief 	A signal that is emitted when the TCL script want to set
      *	      	a configuration variable
      * @param 	section The name of the configuration section
@@ -322,6 +329,8 @@ class EventHandler : public sigc::trackable
                     int argc, const char *argv[]);
     static int setAnnounceOnAllLogicsHandler(ClientData cdata, Tcl_Interp *irp,
                     int argc, const char *argv[]);
+    static int setScheduledAnnouncementHandler(ClientData cdata,
+                    Tcl_Interp *irp, int argc, const char *argv[]);
     static int getConfigValueHandler(ClientData cdata, Tcl_Interp *irp,
                     int argc, const char *argv[]);
     static int setConfigValueHandler(ClientData cdata, Tcl_Interp *irp,

@@ -165,6 +165,8 @@ EventHandler::EventHandler(const string& event_script, const string& logic_name)
   Tcl_CreateCommand(interp, "injectDtmf", injectDtmfHandler, this, NULL);
   Tcl_CreateCommand(interp, "setAnnounceOnAllLogics",
                     setAnnounceOnAllLogicsHandler, this, NULL);
+  Tcl_CreateCommand(interp, "setScheduledAnnouncement",
+                    setScheduledAnnouncementHandler, this, NULL);
   Tcl_CreateCommand(interp, "getConfigValue", getConfigValueHandler,
                     this, NULL);
   Tcl_CreateCommand(interp, "setConfigValue", setConfigValueHandler,
@@ -488,6 +490,22 @@ int EventHandler::setAnnounceOnAllLogicsHandler(ClientData cdata,
 
   return TCL_OK;
 } /* EventHandler::setAnnounceOnAllLogicsHandler */
+
+
+int EventHandler::setScheduledAnnouncementHandler(ClientData cdata,
+                    Tcl_Interp *irp, int argc, const char *argv[])
+{
+  if (argc != 2)
+  {
+    static char msg[] = "Usage: setScheduledAnnouncement <0|1>";
+    Tcl_SetResult(irp, msg, TCL_STATIC);
+    return TCL_ERROR;
+  }
+  EventHandler *self = static_cast<EventHandler *>(cdata);
+  self->setScheduledAnnouncement(atoi(argv[1]) != 0);
+
+  return TCL_OK;
+} /* EventHandler::setScheduledAnnouncementHandler */
 
 
 int EventHandler::getConfigValueHandler(ClientData cdata, Tcl_Interp *irp,

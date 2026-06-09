@@ -254,7 +254,7 @@ class Logic : public LogicBase
     typedef enum
     {
       TX_CTCSS_ALWAYS=1, TX_CTCSS_SQL_OPEN=2, TX_CTCSS_LOGIC=4,
-      TX_CTCSS_MODULE=8, TX_CTCSS_ANNOUNCEMENT=16
+      TX_CTCSS_MODULE=8, TX_CTCSS_ANNOUNCEMENT=16, TX_CTCSS_SCHEDULED=32
     } TxCtcssType;
 
     Rx	      	      	      	    *m_rx;

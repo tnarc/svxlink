@@ -24,6 +24,11 @@ proc setAnnounceOnAllLogics {enable} {
 }
 
 
+proc setScheduledAnnouncement {enable} {
+  puts "setScheduledAnnouncement($enable);";
+}
+
+
 proc reportActiveModuleState {} {
   puts "reportActiveModuleState;";
 }

@@ -308,6 +308,25 @@ proc announceOnAllLogics {body} {
 
 
 #
+# Mark the announcement played by the given script as "scheduled". Scheduled
+# announcements are classified separately for CTCSS purposes: they key a CTCSS
+# tone only if the SCHEDULED value is listed in the TX_CTCSS configuration
+# variable (by default it is not, so scheduled announcements are sent without a
+# CTCSS tone while ordinary announcements still use it). Compose with
+# announceOnAllLogics to broadcast a tone-less scheduled announcement to all
+# ports.
+#
+#   body - A TCL script that plays the announcement
+#
+proc scheduledAnnouncement {body} {
+  setScheduledAnnouncement 1
+  set code [catch {uplevel 1 $body} result options]
+  setScheduledAnnouncement 0
+  return -options $options $result
+}
+
+
+#
 # Recursively print the TCL namespace tree
 #
 #   ns      The namespace name

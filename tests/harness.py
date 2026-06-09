@@ -175,7 +175,8 @@ def goertzel_mag(samples, freq, rate):
 
 class SvxlinkHarness:
     def __init__(self, num_logics=3, link_prefix="91", logic_type="Simplex",
-                 links=None, logic_opts=None, per_logic_opts=None):
+                 links=None, logic_opts=None, per_logic_opts=None,
+                 tx_opts=None, local_event_tcl=None):
         self.num_logics = num_logics
         self.link_prefix = link_prefix
         self.logic_type = logic_type
@@ -184,6 +185,12 @@ class SvxlinkHarness:
         # Extra "KEY=VALUE" lines added to one named logic section, e.g.
         # {"Logic2": {"ANNOUNCE_ALL_EXCLUDE": "1"}}.
         self.per_logic_opts = per_logic_opts or {}
+        # Extra "KEY=VALUE" lines added to every transmitter section, e.g.
+        # {"CTCSS_FQ": "100", "CTCSS_LEVEL": "-6"}.
+        self.tx_opts = tx_opts or {}
+        # Local event-script overrides, written to events.d/local/, e.g.
+        # {"Logic2.tcl": "proc Logic::unknown_command {cmd} { ... }"}.
+        self.local_event_tcl = local_event_tcl or {}
         self.tmp = tempfile.mkdtemp(prefix="svxtest_")
         self.logics = [Logic(f"Logic{i + 1}", self.tmp)
                        for i in range(num_logics)]
@@ -213,6 +220,13 @@ class SvxlinkHarness:
             if fn.endswith(".tcl") and fn != "events.tcl":
                 os.symlink(os.path.join(TCL_SRC_DIR, fn),
                            os.path.join(events_d, fn))
+        # Local event-script overrides (sourced after the base scripts).
+        if self.local_event_tcl:
+            local_d = os.path.join(events_d, "local")
+            os.makedirs(local_d, exist_ok=True)
+            for fn, content in self.local_event_tcl.items():
+                with open(os.path.join(local_d, fn), "w") as f:
+                    f.write(content)
         # A sounds tree the harness can populate with generated clips.
         self.sounds_dir = os.path.join(self.share_dir, "sounds")
         os.makedirs(self.sounds_dir, exist_ok=True)
@@ -260,6 +274,7 @@ class SvxlinkHarness:
                 f"AUDIO_DEV=udp:127.0.0.1:{l.tx_port}",
                 "AUDIO_CHANNEL=0",
                 "PTT_TYPE=NONE",
+                *[f"{k}={v}" for k, v in self.tx_opts.items()],
                 "",
                 f"[{l.name}]",
                 f"TYPE={self.logic_type}",
