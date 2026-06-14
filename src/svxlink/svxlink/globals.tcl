@@ -300,9 +300,9 @@ proc playMsg {context msg {warn 1}} {
 #   body - A TCL script that plays the announcement
 #
 proc announceOnAllLogics {body} {
-  setAnnounceOnAllLogics 1
+  ::setAnnounceOnAllLogics 1
   set code [catch {uplevel 1 $body} result options]
-  setAnnounceOnAllLogics 0
+  ::setAnnounceOnAllLogics 0
   return -options $options $result
 }
 
@@ -319,9 +319,9 @@ proc announceOnAllLogics {body} {
 #   body - A TCL script that plays the announcement
 #
 proc scheduledAnnouncement {body} {
-  setScheduledAnnouncement 1
+  ::setScheduledAnnouncement 1
   set code [catch {uplevel 1 $body} result options]
-  setScheduledAnnouncement 0
+  ::setScheduledAnnouncement 0
   return -options $options $result
 }
 
