@@ -143,6 +143,12 @@ bool SquelchVox::initialize(Config& cfg, const string& rx_name)
     return false;
   }
   buf_size = INTERNAL_SAMPLE_RATE * atoi(value.c_str()) / 1000;
+  if (buf_size <= 0)
+  {
+    cerr << "*** ERROR: Config variable " << rx_name
+      	 << "/VOX_FILTER_DEPTH must be a positive integer\n";
+    return false;
+  }
   buf = new float[buf_size];
   for (int i=0; i<buf_size; ++i)
   {
