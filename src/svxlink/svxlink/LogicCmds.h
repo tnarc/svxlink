@@ -167,6 +167,52 @@ class ModuleActivateCmd : public Command
 
 
 /**
+@brief	Cross-logic module-command forwarding activation command
+@author Mark Rose
+@date   2026-06-29
+
+This command takes the place of a local module activation command on a band
+port that does not host the module itself. When the operator dials the module
+command id, a forwarding session is opened to the configured target logic and
+the activation (plus all subsequent command DTMF) is delivered to that logic's
+own command processing, which activates and drives the real module there.
+
+It is set up from the FORWARD_MODULE_CMD configuration variable, format
+<module_cmd_id>:<target_logic_name> (e.g. 2:EchoLinkLogic).
+*/
+class ForwardModuleCmd : public Command
+{
+  public:
+    /**
+     * @brief   Constructor
+     * @param   parser        The command parser to associate this command with
+     * @param   cmd           The module command id to forward
+     * @param   logic         The (band port) logic the command operates on
+     * @param   target_logic  The name of the logic owning the real module
+     */
+    ForwardModuleCmd(CmdParser *parser, const std::string& cmd, Logic *logic,
+                     const std::string& target_logic)
+      : Command(parser, cmd), logic(logic), target_logic(target_logic) {}
+
+    virtual ~ForwardModuleCmd(void) {}
+
+    /**
+     * @brief   Handle the command
+     * @param   subcmd The part of the command not matching the command base
+     */
+    virtual void operator ()(const std::string& subcmd) override
+    {
+      logic->forwardModuleCmd(cmdStr(), subcmd, target_logic);
+    }
+
+  private:
+    Logic       *logic;
+    std::string  target_logic;
+
+};  /* class ForwardModuleCmd */
+
+
+/**
 @brief	The logic linking activation command
 @author Tobias Blomberg
 @date   2005-04-24
