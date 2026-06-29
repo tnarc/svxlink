@@ -796,6 +796,42 @@ LogicBase *LinkManager::currentTalkerFor(const std::string& logic_name)
 } /* LinkManager::currentTalkerFor */
 
 
+LogicBase *LinkManager::findLogic(const std::string& logic_name)
+{
+  LogicMap::iterator it = logic_map.find(logic_name);
+  if (it == logic_map.end())
+  {
+    return 0;
+  }
+  return it->second.logic;
+} /* LinkManager::findLogic */
+
+
+bool LinkManager::logicsAreLinked(const std::string& logic_name1,
+                                  const std::string& logic_name2)
+{
+    // Two logics are considered linked when they are both members of at least
+    // one currently-activated link. This reflects the configured/bridged
+    // topology rather than instantaneous audio routing, which can change while
+    // a module mutes logic linking.
+  if (logic_name1 == logic_name2)
+  {
+    return false;
+  }
+  for (LinkMap::iterator it = links.begin(); it != links.end(); ++it)
+  {
+    Link &link = it->second;
+    if (link.is_activated &&
+        (link.logic_props.find(logic_name1) != link.logic_props.end()) &&
+        (link.logic_props.find(logic_name2) != link.logic_props.end()))
+    {
+      return true;
+    }
+  }
+  return false;
+} /* LinkManager::logicsAreLinked */
+
+
 void LinkManager::setLogicMute(const LogicBase *logic, bool mute)
 {
   LogicInfo &info = logic_map.at(logic->name());

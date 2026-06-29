@@ -220,11 +220,29 @@ class Logic : public LogicBase
     virtual void remoteCmdReceived(LogicBase* src_logic,
                                    const std::string& cmd);
     virtual void remoteReceivedTgUpdated(LogicBase *src_logic, uint32_t tg);
+    virtual void remoteReceivedPublishStateEvent(
+        LogicBase *src_logic, const std::string& event_name,
+        const std::string& msg) override;
 
 
     CmdParser *cmdParser(void) { return &cmd_parser; }
 
     void processMacroCmd(const std::string &macro_cmd);
+
+    /**
+     * @brief   Open a cross-logic module-command forwarding session
+     * @param   cmd_id        The module command id dialled on this (band) port
+     * @param   target_logic  The name of the logic owning the real module
+     *
+     * Called by ForwardModuleCmd when an operator dials a forwarded module
+     * command id. The activation digit and all subsequent command DTMF entered
+     * on this port are delivered to the target logic's own command processing
+     * (via injectDtmfDigit) until the target module deactivates.
+     * Implements first-owner-locks: if the target module is already in use by
+     * another port a "busy" (command_failed) event is generated instead.
+     */
+    void forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
+                          const std::string& target_logic);
 
   protected:
     /**
@@ -331,6 +349,23 @@ class Logic : public LogicBase
     std::vector<DeferredPlayOp>     m_deferred_ops;
     Async::Timer                    m_defer_timeout_timer;
 
+      // Cross-logic module-command forwarding (FORWARD_MODULE_CMD).
+      // Maps a module command id dialled on this (band-port) logic to the name
+      // of the target logic that owns the real module.
+    std::map<std::string, std::string> m_fwd_targets;
+      // While non-empty, this port has an open forwarding session and all
+      // command DTMF is injected into the named target logic instead of being
+      // processed locally.
+    std::string                     m_fwd_active_target;
+      // The module command id that opened the current forwarding session.
+    std::string                     m_fwd_active_cmd_id;
+      // Guard against forwarded injects bouncing back into forwarding.
+    bool                            m_in_forwarded_inject         {false};
+      // Busy/ownership state for module command ids hosted on a target logic
+      // and reflected to this logic via cross-logic state sync. Maps
+      // "<target_logic>:<cmd_id>" to the owning logic name ("" == free).
+    std::map<std::string, std::string> m_fwd_owner;
+
     void loadModules(void);
     void loadModule(const std::string& module_name);
     void unloadModules(void);
@@ -354,6 +389,8 @@ class Logic : public LogicBase
     void onPublishStateEvent(const std::string &event_name,
                              const std::string &msg);
     void detectedTone(float fq);
+    void publishModuleState(Module *module, bool active);
+    void endForwardingSession(void);
     void cfgUpdated(const std::string& section, const std::string& tag);
     bool getConfigValue(const std::string& section, const std::string& tag,
                         std::string& value);

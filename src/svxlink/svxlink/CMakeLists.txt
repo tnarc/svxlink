@@ -119,6 +119,14 @@ add_test(NAME scheduled_announcement_defer
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_scheduled_defer.py)
 
+# Integration test: transparent cross-logic module-command forwarding
+# (FORWARD_MODULE_CMD). Launches a multi-logic svxlink on virtual hardware and
+# drives DTMF via the control PTYs. Requires the svxlink binary plus the
+# SimplexLogic and ModuleParrot plugins to be built first.
+add_test(NAME forward_module_cmd
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_forward_module_cmd.py)
+
 # Generate config file with correct paths
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/svxlink.conf.in
   ${CMAKE_CURRENT_BINARY_DIR}/svxlink.conf

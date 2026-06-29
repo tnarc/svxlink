@@ -68,9 +68,11 @@ class Logic:
         # PTY slave on every command hangs up the master, so the fd is opened
         # once (lazily, after svxlink creates the symlink) and reused.
         self.dtmf_fd = None
+        # Read fd for the STATE_PTY (published state events). Opened lazily.
+        self.state_fd = None
 
     def close(self):
-        for fd in (self.dtmf_fd,):
+        for fd in (self.dtmf_fd, self.state_fd):
             if fd is not None:
                 try:
                     os.close(fd)
@@ -177,7 +179,7 @@ class SvxlinkHarness:
     def __init__(self, num_logics=3, link_prefix="91", logic_type="Simplex",
                  links=None, logic_opts=None, per_logic_opts=None,
                  tx_opts=None, local_event_tcl=None, per_tx_opts=None,
-                 extra_sections=None):
+                 extra_sections=None, global_opts=None):
         self.num_logics = num_logics
         self.link_prefix = link_prefix
         self.logic_type = logic_type
@@ -198,6 +200,9 @@ class SvxlinkHarness:
         # Arbitrary extra config sections, e.g.
         # {"CtcssEnc2": ["PTT_TYPE=PTY", "PTT_PTY=/path"]}.
         self.extra_sections = extra_sections or {}
+        # Extra "KEY=VALUE" lines added to the [GLOBAL] section, e.g.
+        # {"MODULE_PATH": "/path/to/build/lib"} so loadable modules are found.
+        self.global_opts = global_opts or {}
         self.tmp = tempfile.mkdtemp(prefix="svxtest_")
         self.logics = [Logic(f"Logic{i + 1}", self.tmp)
                        for i in range(num_logics)]
@@ -260,6 +265,7 @@ class SvxlinkHarness:
             "LINKS=" + ",".join(lk.name for lk in self.links),
             f"CARD_SAMPLE_RATE={SAMPLE_RATE}",
             f"LOGIC_CORE_PATH={os.path.join(REPO, 'build', 'lib')}",
+            *[f"{k}={v}" for k, v in self.global_opts.items()],
             "",
         ]
         for l in self.logics:
@@ -360,6 +366,23 @@ class SvxlinkHarness:
             self.start_talk(logic_name, freq)
         else:
             self.stop_talk(logic_name)
+
+    def read_state(self, logic_name):
+        """Return all STATE_PTY text published by `logic_name` since the last
+        read. Non-blocking; opens the read fd lazily on first use."""
+        l = self.by_name[logic_name]
+        if l.state_fd is None:
+            l.state_fd = os.open(l.state_pty, os.O_RDONLY | os.O_NONBLOCK)
+        out = b""
+        try:
+            while True:
+                chunk = os.read(l.state_fd, 4096)
+                if not chunk:
+                    break
+                out += chunk
+        except (BlockingIOError, OSError):
+            pass
+        return out.decode(errors="replace")
 
     # -- observe -------------------------------------------------------------
     def _drain(self, l):

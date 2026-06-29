@@ -326,6 +326,34 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
     long_cmd_module = module;
   }
 
+    // Cross-logic module-command forwarding. One or more rules of the form
+    // <module_cmd_id>:<target_logic_name>, comma separated. The activation
+    // command object is created later (in loadModules) so it can detect a
+    // collision with a locally hosted module of the same id.
+  std::string fwd_module_cmd;
+  if (cfg().getValue(name(), "FORWARD_MODULE_CMD", fwd_module_cmd))
+  {
+    std::vector<std::string> rules;
+    SvxLink::splitStr(rules, fwd_module_cmd, ",");
+    for (const auto& rule : rules)
+    {
+      std::string::size_type colon = rule.find(':');
+      if ((colon == std::string::npos) || (colon == 0) ||
+          (colon + 1 >= rule.size()))
+      {
+        cerr << "*** ERROR: Format error for configuration variable\n"
+             << "           " << name() << "/FORWARD_MODULE_CMD: \""
+             << rule << "\". The format should be "
+             << "<module_cmd_id>:<target_logic_name> "
+             << "(e.g. 2:EchoLinkLogic)\n";
+        return false;
+      }
+      std::string cmd_id(rule, 0, colon);
+      std::string target(rule, colon + 1);
+      m_fwd_targets[cmd_id] = target;
+    }
+  }
+
   cfg().getValue(name(), "MACRO_PREFIX", m_macro_prefix);
   std::string macro_section;
   if (cfg().getValue(name(), "MACROS", macro_section))
@@ -677,6 +705,34 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
 
   loadModules();
 
+    // Register cross-logic module-command forwarding commands. Each maps a
+    // module command id (which this band port does NOT host locally) to a
+    // target logic that owns the real module.
+  for (const auto& fwd : m_fwd_targets)
+  {
+    const std::string& cmd_id = fwd.first;
+    const std::string& target = fwd.second;
+    if (findModule(atoi(cmd_id.c_str())) != 0)
+    {
+      cerr << "*** ERROR: " << name() << "/FORWARD_MODULE_CMD specifies id "
+           << cmd_id << " which is also a locally loaded module. Remove the "
+           << "module from this logic to forward its command.\n";
+      cleanup();
+      return false;
+    }
+    ForwardModuleCmd *cmd =
+        new ForwardModuleCmd(&cmd_parser, cmd_id, this, target);
+    if (!cmd->addToParser())
+    {
+      cerr << "*** ERROR: Could not add forwarding command \"" << cmd_id
+           << "\" for logic " << name() << ". The id probably collides with "
+           << "another command.\n";
+      delete cmd;
+      cleanup();
+      return false;
+    }
+  }
+
   string loaded_modules;
   list<Module*>::const_iterator mit;
   for (mit=modules.begin(); mit!=modules.end(); ++mit)
@@ -962,6 +1018,11 @@ bool Logic::activateModule(Module *module)
   {
     active_module = module;
     audio_to_module_splitter->enableSink(module, true);
+      // Publish the busy state before activating: module activation may mute
+      // logic linking, after which a published event would no longer reach the
+      // bridged band ports. Publishing first ensures every port learns the
+      // shared module is now in use (first-owner-locks).
+    publishModuleState(module, true);
     module->activate();
     event_handler->setVariable("active_module", module->name());
     return true;
@@ -984,6 +1045,7 @@ void Logic::deactivateModule(Module *module)
     active_module = 0;
     module->deactivate();
     event_handler->setVariable("active_module", "");
+    publishModuleState(module, false);
   }
 } /* Logic::deactivateModule */
 
@@ -1027,6 +1089,30 @@ Module *Logic::findModule(const string& name)
 
 void Logic::dtmfDigitDetected(char digit, int duration)
 {
+    // While a cross-logic forwarding session is open on this (band) port,
+    // every command digit is delivered to the target logic's own command
+    // path instead of being processed locally. The m_in_forwarded_inject
+    // guard prevents a forwarded inject on a target from bouncing back.
+  if (!m_fwd_active_target.empty() && !m_in_forwarded_inject)
+  {
+    LogicBase *base = LinkManager::hasInstance()
+        ? LinkManager::instance()->findLogic(m_fwd_active_target) : 0;
+    Logic *target = dynamic_cast<Logic*>(base);
+    if (target != 0)
+    {
+        // Mark the target so a forwarded inject can never be re-forwarded
+        // (loop guard), then deliver the digit to its own command path.
+      target->m_in_forwarded_inject = true;
+      target->injectDtmfDigit(digit, duration);
+      target->m_in_forwarded_inject = false;
+    }
+    else
+    {
+      endForwardingSession();
+    }
+    return;
+  }
+
   if (active_module != 0)
   {
     if (active_module->dtmfDigitReceived(digit, duration))
@@ -1134,6 +1220,107 @@ void Logic::remoteReceivedTgUpdated(LogicBase *src_logic, uint32_t tg)
   ss << tg;
   processEvent(ss.str());
 } /* Logic::remoteReceivedTgUpdated */
+
+
+void Logic::remoteReceivedPublishStateEvent(LogicBase *src_logic,
+    const std::string& event_name, const std::string& msg)
+{
+    // Cross-logic module-command forwarding state sync. The target logic
+    // publishes "ModuleFwd:state" with "<cmd_id> <active>". Every linked band
+    // port records whether the shared module is busy so it can reflect
+    // busy/free and enforce first-owner-locks.
+  if (event_name == "ModuleFwd:state")
+  {
+    std::istringstream ss(msg);
+    std::string cmd_id;
+    int active = 0;
+    ss >> cmd_id >> active;
+    if (!cmd_id.empty())
+    {
+      std::string key = src_logic->name() + ":" + cmd_id;
+      if (active != 0)
+      {
+        m_fwd_owner[key] = src_logic->name();
+      }
+      else
+      {
+        m_fwd_owner.erase(key);
+          // The shared module is now idle. If we still believe we have an
+          // open forwarding session to this target, tear it down so the band
+          // port leaves forwarding mode (remote hang-up/timeout/deactivate).
+        if ((src_logic->name() == m_fwd_active_target) &&
+            (cmd_id == m_fwd_active_cmd_id))
+        {
+          endForwardingSession();
+        }
+      }
+    }
+    return;
+  }
+
+  LogicBase::remoteReceivedPublishStateEvent(src_logic, event_name, msg);
+} /* Logic::remoteReceivedPublishStateEvent */
+
+
+void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
+                             const std::string& target_logic)
+{
+  LogicBase *base = LinkManager::hasInstance()
+      ? LinkManager::instance()->findLogic(target_logic) : 0;
+  Logic *target = dynamic_cast<Logic*>(base);
+  if (target == 0)
+  {
+    cerr << "*** WARNING: " << name() << ": FORWARD_MODULE_CMD target logic \""
+         << target_logic << "\" not found.\n";
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
+    // Forwarding is only meaningful between logics that are actually bridged.
+  if (!LinkManager::instance()->logicsAreLinked(name(), target_logic))
+  {
+    cerr << "*** WARNING: " << name() << ": FORWARD_MODULE_CMD target logic \""
+         << target_logic << "\" is not currently linked.\n";
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
+    // First-owner-locks: if the shared module is already in use (busy) and
+    // this port does not already own the session, respond busy rather than
+    // interleaving into the session.
+  std::string key = target_logic + ":" + cmd_id;
+  bool busy = (m_fwd_owner.find(key) != m_fwd_owner.end());
+  bool i_own = (m_fwd_active_target == target_logic) &&
+               (m_fwd_active_cmd_id == cmd_id);
+  if (busy && !i_own)
+  {
+    std::cout << name() << ": Module command " << cmd_id << " on "
+              << target_logic << " is in use by another port" << std::endl;
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
+    // Open the forwarding session and drive the target. The activation digit
+    // (and any digits dialled with it) go through the target's own command
+    // path, exactly as if they had been received locally on the target.
+  m_fwd_active_target = target_logic;
+  m_fwd_active_cmd_id = cmd_id;
+  std::cout << name() << ": Forwarding module command " << cmd_id << " to "
+            << target_logic << std::endl;
+
+    // Deliver the activation command to the target's own command path. The
+    // dialled digits arrive here already terminated (the activation command is
+    // complete), so a '#' terminator is appended to complete the command on
+    // the target. Subsequent live command digits are forwarded individually
+    // by dtmfDigitDetected, including the operator's own '#' terminators.
+  std::string to_inject = cmd_id + sub + "#";
+  for (unsigned i = 0; i < to_inject.size(); ++i)
+  {
+    target->m_in_forwarded_inject = true;
+    target->injectDtmfDigit(to_inject[i], 100);
+    target->m_in_forwarded_inject = false;
+  }
+} /* Logic::forwardModuleCmd */
 
 
 /****************************************************************************
@@ -2058,6 +2245,37 @@ void Logic::onPublishStateEvent(const string &event_name, const string &msg)
   os << endl;
   state_pty->write(os.str().c_str(), os.str().size());
 } /* Logic::onPublishStateEvent */
+
+
+void Logic::endForwardingSession(void)
+{
+  if (m_fwd_active_target.empty())
+  {
+    return;
+  }
+  std::cout << name() << ": Ending forwarding session to "
+            << m_fwd_active_target << std::endl;
+  m_fwd_active_target.clear();
+  m_fwd_active_cmd_id.clear();
+} /* Logic::endForwardingSession */
+
+
+void Logic::publishModuleState(Module *module, bool active)
+{
+    // Publish this logic's module active/idle state so that linked band ports
+    // can reflect busy/free and enforce first-owner-locks for forwarded
+    // module commands. Ownership of a forwarding session is tracked on the
+    // band port that opened it (it knows it has m_fwd_active_target set); the
+    // published message therefore only needs to convey which command id is
+    // busy/free on this (target) logic.
+  if (module->id() < 0)
+  {
+    return;
+  }
+  std::ostringstream ss;
+  ss << module->id() << " " << (active ? 1 : 0);
+  onPublishStateEvent("ModuleFwd:state", ss.str());
+} /* Logic::publishModuleState */
 
 
 void Logic::detectedTone(float fq)

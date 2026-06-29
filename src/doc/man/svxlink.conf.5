@@ -404,6 +404,37 @@ macros section (refer to Macros Section, next chapter). Other sequences but the
 one defined under OPEN_ON_SEL5 are ignored so it can be used to call other
 stations via the repeater without a repeater reaction.
 .TP
+.B FORWARD_MODULE_CMD
+Transparently forward a module activation command from this logic core to a
+module hosted on another (linked) logic core. The format is a comma separated
+list of
+.BR <module_cmd_id>:<target_logic_name>
+rules, e.g.
+.BR "FORWARD_MODULE_CMD=2:EchoLinkLogic" .
+This is intended for a site that bridges several band ports into an
+always-active link and wants a single shared module instance (for example one
+EchoLink running on a dedicated logic) to be controlled from any band port
+using the existing DTMF commands.
+.br
+When an operator on this logic dials the configured module command id, a
+forwarding session is opened to the target logic and the activation, plus every
+subsequent command digit entered on this port, is delivered to the target
+logic's own command processing, which activates and drives the real module
+there. Audio and announcements travel back over the active link, so the
+operator experience is unchanged. The session ends automatically when the
+target module deactivates (remote hang-up, timeout, or an explicit deactivate
+command the operator dials, which is also forwarded).
+.br
+The concurrency model is first-owner-locks: the port that opens the session
+owns it, and while the shared module is in use a second port attempting the
+same command id receives a "command failed" (busy) response rather than
+interleaving into the session. The target logic publishes the module's
+active/idle state to the bridged logics so every port reflects "in use"/"free".
+.br
+The id specified here must not also be a module loaded locally on this logic;
+the module should live only on the target logic. Forwarding only operates
+between logics that are members of a common, currently activated link.
+.TP
 .B ONLINE_CMD
 Define a DTMF command that is used to switch the node between online and
 offline mode. When in the off-state, the transmitter will not be turned on by

@@ -253,6 +253,26 @@ class LinkManager : public sigc::trackable
     LogicBase *currentTalkerFor(const std::string& logic_name);
 
     /**
+     * @brief   Look up a registered logic core by name
+     * @param   logic_name The name of the logic to find
+     * @return  Returns the logic core or \em 0 if no such logic is registered
+     */
+    LogicBase *findLogic(const std::string& logic_name);
+
+    /**
+     * @brief   Check if two logic cores are currently linked together
+     * @param   logic_name1 The name of the first logic
+     * @param   logic_name2 The name of the second logic
+     * @return  Returns \em true if both logics are members of a common
+     *          currently-activated link
+     *
+     * This reflects the configured/bridged topology rather than instantaneous
+     * audio routing (which can change while a module mutes logic linking).
+     */
+    bool logicsAreLinked(const std::string& logic_name1,
+                         const std::string& logic_name2);
+
+    /**
      * @brief   Set mute state for the given logic core
      * @param   logic The logic to operate on
      * @param   mute Set to \em true to mute the given logic core
