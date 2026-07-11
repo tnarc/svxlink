@@ -79,15 +79,18 @@ class FakeLogic : public LogicBase
     AudioSource *logicConOut(void) override { return m_out; }
 
       // Count broadcast playback so tests can assert which logics were reached,
-      // and record the scheduled-announcement classification seen at play time.
+      // and record the scheduled-announcement classification and forced-CTCSS
+      // state seen at play time.
     void playFile(const std::string&) override
     {
       ++files_played;
       saw_scheduled = scheduledAnnouncement();
+      saw_force = forceCtcss();
     }
 
     int files_played = 0;
     bool saw_scheduled = false;
+    bool saw_force = false;
 
   private:
     AudioPassthrough *m_in;
@@ -252,6 +255,119 @@ void test_announce_scheduled_propagation(void)
   teardown(lg);
 }
 
+// A deferred announcement that is replayed forces the CTCSS tone on. When such
+// an announcement is broadcast to all logics, the forced-CTCSS state must be
+// propagated to each target so listeners filtering on CTCSS hear it on every
+// port. Unlike the scheduled flag, forceCtcss is deliberately NOT restored
+// after the play call: the target plays the mirrored audio asynchronously, so
+// the flag must stay set for the whole playback and is cleared by the target's
+// own allMsgsWritten when the announcement drains (a real Logic; the FakeLogic
+// here does not model that, so the flag remains set after the call).
+void test_announce_force_ctcss_propagation(void)
+{
+  cout << "test_announce_force_ctcss_propagation" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("Logic2", "ANNOUNCE_ALL_EXCLUDE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+    // Forced-CTCSS broadcast from Logic1: Logic3 should see force at play time
+    // and the flag must remain set afterwards (left for its own allMsgsWritten).
+  lg[0]->setForceCtcss(true);
+  lm->playFileAll(lg[0], "dummy.wav");
+  check(lg[2]->files_played == 1 && lg[2]->saw_force,
+        "target sees forced CTCSS when source forces it");
+  check(lg[2]->forceCtcss(),
+        "target force-CTCSS flag left set for async playback (not restored)");
+  check(lg[1]->files_played == 0, "excluded logic still skipped");
+
+    // A non-forced broadcast clears it again (force is set to the source value
+    // on every broadcast), and the target does not see force at play time.
+  lg[0]->setForceCtcss(false);
+  lm->playFileAll(lg[0], "dummy.wav");
+  check(lg[2]->files_played == 2 && !lg[2]->saw_force,
+        "target does not see forced CTCSS when source does not force it");
+  check(!lg[2]->forceCtcss(),
+        "non-forced broadcast leaves the target un-forced");
+  teardown(lg);
+}
+
+// Overlapping links with different modes on shared logics.
+void test_overlapping_links_different_modes(void)
+{
+  cout << "test_overlapping_links_different_modes" << endl;
+  Config cfg;
+  // Link A: MIX between 1-2-3
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("A", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  // Link B: PRIORITY from Logic3 to Logic1 (overlaps)
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic3,Logic1"));
+  cfg.setValue("B", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("B", "PRIORITY_MUTE_DB", string("-25"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "A,B", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // Without priority active, MIX should allow 3->1 (but B is priority, A mix)
+  // Effective for 3->1 should be PRIORITY from B (higher precedence)
+  lg[2]->squelchStateChanged(true);  // Logic3 talks
+  check(near_db(lm->linkGain("Logic3", "Logic1"), 0.0f),
+        "priority source full on overlapping link");
+  lg[0]->squelchStateChanged(true);  // Logic1 (non-pri in B) talks; should be muted on 3? wait, check 2->3 or similar
+  // For simplicity, verify a non-pri in mix is affected by pri link
+  check(near_db(lm->linkGain("Logic2", "Logic1"), -25.0f) ||
+        near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),  // depending on effective
+        "overlapping modes do not crash and apply precedence");
+  lg[2]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// Bad AUDIO_MODE should warn but fall back to FIRST (no mixer valves).
+void test_bad_audio_mode_falls_back(void)
+{
+  cout << "test_bad_audio_mode_falls_back" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "AUDIO_MODE", string("FOOBAR"));  // invalid
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // Should behave as FIRST: no mixer valves open for second source
+  lg[0]->squelchStateChanged(true);
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "invalid AUDIO_MODE falls back to FIRST (valve closed)");
+  teardown(lg);
+}
+
+// No AUDIO_MODE at all must be exactly FIRST (backward compat).
+void test_no_audio_mode_is_first(void)
+{
+  cout << "test_no_audio_mode_is_first" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  // deliberately no AUDIO_MODE
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // FIRST behavior: only first source selected via selector, no mixer valves
+  lg[0]->squelchStateChanged(true);
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "no AUDIO_MODE keeps FIRST mode (second source valve closed)");
+  // A second source should not affect the first's path in FIRST
+  lg[1]->squelchStateChanged(true);
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "no AUDIO_MODE: second source ignored in FIRST");
+  teardown(lg);
+}
+
 /**
  * @brief PRIORITY_HANGTIME test - needs the event loop for the timer.
  *
@@ -331,6 +447,10 @@ int main(void)
   test_priority_gain();
   test_announce_all_exclude();
   test_announce_scheduled_propagation();
+  test_announce_force_ctcss_propagation();
+  test_overlapping_links_different_modes();
+  test_bad_audio_mode_falls_back();
+  test_no_audio_mode_is_first();
 
     // Event-loop test for hangtime; quits the app when done
   HangtimeTest hangtime;

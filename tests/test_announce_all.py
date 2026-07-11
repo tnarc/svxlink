@@ -17,7 +17,7 @@ import sys
 import traceback
 from contextlib import contextmanager
 
-from harness import SvxlinkHarness
+from harness import SvxlinkHarness, LinkSpec
 
 # Sound clips referenced by the announcements under test. Their presence makes
 # the playMsg produce audio so the transmitter keys; the exact content is
@@ -96,11 +96,43 @@ def test_local_announcement_stays_on_one_port():
                 f"other ports must NOT key for a local announcement, got {counts}")
 
 
+def test_repeater_announce_broadcast_and_courtesy():
+    """RepeaterLogic + new features: link-up broadcast still keys all ports,
+    and local repeater courtesy/ID behavior (tail TX after squelch close) is
+    not broken by the audio mode / announce changes."""
+    h = SvxlinkHarness(num_logics=2, logic_type="Repeater",
+                       links=[LinkSpec("TestLink", ["Logic1", "Logic2"],
+                                       prefix="91", default_active=False)])
+    h.setup()
+    for clip in LINK_CLIPS:
+        h.add_sound_clip("en_US", "Core", clip)
+    # Add a clip that repeater might play for courtesy/tail (repeater often plays
+    # a short tone or ID on tail; we just need something to make TX packets).
+    h.add_sound_clip("en_US", "Core", "courtesy")
+    h.start()
+    try:
+        # Broadcast should still work on repeater
+        counts = h.count_tx_after(lambda: h.send_dtmf("Logic1", "911#"))
+        _assert(counts["Logic1"] > 0 and counts["Logic2"] > 0,
+                f"repeater broadcast should key ports, got {counts}")
+
+        # Local repeater courtesy/tail after squelch: should produce TX packets
+        # even with linked audio features active.
+        h.set_squelch("Logic1", True)
+        h.set_squelch("Logic1", False)  # close -> tail/courtesy
+        tail_counts = h.count_tx_after(window=1.5)
+        _assert(tail_counts["Logic1"] > 0,
+                f"repeater should transmit courtesy/tail after squelch, got {tail_counts}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_link_up_broadcasts_to_all_ports,
     test_link_down_broadcasts_to_all_ports,
     test_excluded_logic_is_skipped_by_broadcast,
     test_local_announcement_stays_on_one_port,
+    test_repeater_announce_broadcast_and_courtesy,
 ]
 
 

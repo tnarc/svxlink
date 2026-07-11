@@ -340,6 +340,24 @@ ANNOUNCEMENT).
 will always transmit a CTCSS tone as soon as the transmitter is turned on.
 .RE
 .TP
+.B SCHEDULED_ANNOUNCEMENT_DEFER
+If set to 1, a scheduled announcement (one played from within the
+scheduledAnnouncement TCL helper) that is triggered while the channel is busy
+with an active transmission will be deferred and held until the channel goes
+idle. It is then replayed at the first silence. A deferred announcement is
+always keyed with the CTCSS tone when it is finally played, regardless of the
+SCHEDULED setting in TX_CTCSS, so that everyone using the repeater hears it.
+The default is 0 (disabled), in which case scheduled announcements are played
+immediately as before.
+.TP
+.B SCHEDULED_ANNOUNCEMENT_MAX_DELAY
+The maximum time, in seconds, that a deferred scheduled announcement is held
+waiting for the channel to go idle (see SCHEDULED_ANNOUNCEMENT_DEFER). If the
+channel is still busy when this time elapses, the announcement interrupts the
+active traffic and is played anyway (with the CTCSS tone keyed). A value of 0
+(the default) means wait indefinitely for the first silence and never
+interrupt. Has no effect unless SCHEDULED_ANNOUNCEMENT_DEFER is enabled.
+.TP
 .B MACRO_PREFIX
 Zero or more DTMF digits a command must start with to be identified as a macro
 command. If a prefix is set, macro commands will have higher priority in the
