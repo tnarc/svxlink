@@ -131,6 +131,29 @@ void test_add_remove_lifecycle(void)
   check(!c12.removeFromParser(), "removing again returns false");
 }
 
+void test_destroying_rejected_duplicate_keeps_original(void)
+{
+  cout << "test_destroying_rejected_duplicate_keeps_original" << endl;
+  CmdParser p;
+  RecCmd c12(&p, "12");
+  check(c12.addToParser(), "first add succeeds");
+
+  // A duplicate command string is rejected by addToParser() and so is never
+  // stored in the parser's map. Its destructor, however, still calls
+  // parser->removeCmd(this) unconditionally (via ~Command()). Before the
+  // fix, removeCmd() looked the map entry up by command string only and
+  // erased whatever was stored there -- the still-live original -- even
+  // though the pointer being removed was never the one in the map.
+  RecCmd *dup = new RecCmd(&p, "12");
+  check(!dup->addToParser(), "duplicate command string rejected");
+  delete dup;
+
+  check(p.processCmd("12"), "original command still matches after duplicate is destroyed");
+  check(c12.calls == 1, "original command was invoked");
+  check(c12.removeFromParser(),
+        "original command is still registered and can be explicitly removed");
+}
+
 // Records handleCmd signal emissions.
 class SignalRecorder : public sigc::trackable
 {
@@ -168,6 +191,7 @@ int main(void)
   test_exact_match_blocks_subcmd();
   test_unknown_command();
   test_add_remove_lifecycle();
+  test_destroying_rejected_duplicate_keeps_original();
   test_handle_cmd_signal();
 
   cout << endl;
