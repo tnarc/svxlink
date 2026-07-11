@@ -257,6 +257,23 @@ class Logic : public LogicBase
       TX_CTCSS_MODULE=8, TX_CTCSS_ANNOUNCEMENT=16, TX_CTCSS_SCHEDULED=32
     } TxCtcssType;
 
+    /**
+     * @brief A single playback operation captured for deferred replay
+     *
+     * Used to record the playFile/playSilence/playTone/playDtmf calls that make
+     * up a scheduled announcement so that they can be replayed once the channel
+     * goes idle (see SCHEDULED_ANNOUNCEMENT_DEFER).
+     */
+    struct DeferredPlayOp
+    {
+      enum Type { FILE, SILENCE, TONE, DTMF } type;
+      std::string str;            // File path (FILE) or DTMF digits (DTMF)
+      int         arg1;           // Silence length / tone fq / DTMF amp
+      int         arg2;           // Tone amp / DTMF len
+      int         arg3;           // Tone len
+      bool        announce_all;   // Mirror to all logics on replay
+    };
+
     Rx	      	      	      	    *m_rx;
     Tx	      	      	      	    *m_tx;
     MsgHandler	      	      	    *msg_handler;
@@ -307,6 +324,12 @@ class Logic : public LogicBase
     float                           m_ctcss_to_tg_last_fq;
     std::string                     m_macro_prefix                {"D"};
     bool                            m_announce_on_all_logics      {false};
+    bool                            m_defer_sched_announcements   {false};
+    int                             m_sched_announcement_max_delay {0};
+    bool                            m_sched_busy_at_start         {false};
+    bool                            m_replaying_deferred          {false};
+    std::vector<DeferredPlayOp>     m_deferred_ops;
+    Async::Timer                    m_defer_timeout_timer;
 
     void loadModules(void);
     void loadModule(const std::string& module_name);
@@ -322,6 +345,10 @@ class Logic : public LogicBase
     void dtmfDigitDetectedP(char digit, int duration);
     void cleanup(void);
     void updateTxCtcss(bool do_set, TxCtcssType type);
+    void onSetScheduledAnnouncement(bool enable);
+    bool deferScheduledOp(const DeferredPlayOp& op);
+    void flushDeferredAnnouncement(void);
+    void deferTimeout(Async::Timer *t);
     void logicConInStreamStateChanged(bool is_active, bool is_idle);
     void audioFromModuleStreamStateChanged(bool is_active, bool is_idle);
     void onPublishStateEvent(const std::string &event_name,

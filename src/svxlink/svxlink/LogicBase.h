@@ -206,6 +206,46 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     bool scheduledAnnouncement(void) const { return m_scheduled_announcement; }
 
     /**
+     * @brief   Force the CTCSS tone on while playing the current announcement
+     * @param   enable Set to \em true to force CTCSS regardless of TX_CTCSS
+     *
+     * While set, announcements played by this logic core key the CTCSS tone
+     * even if the relevant TX_CTCSS category would normally suppress it. This
+     * is used for deferred scheduled announcements that cut in on (or interrupt)
+     * active traffic: they must key CTCSS so that listeners filtering on CTCSS
+     * still hear them. Held here in LogicBase so that the LinkManager can
+     * propagate it to the other ports when such an announcement is broadcast
+     * via announceOnAllLogics.
+     */
+    void setForceCtcss(bool enable) { m_force_ctcss = enable; }
+
+    /**
+     * @brief   Check if the CTCSS tone is currently being forced on
+     * @return  Returns \em true if CTCSS is being forced for an announcement
+     */
+    bool forceCtcss(void) const { return m_force_ctcss; }
+
+    /**
+     * @brief   Suppress scheduled-announcement deferral on this logic
+     * @param   enable Set to \em true to bypass the deferral capture window
+     *
+     * While set, play operations on this logic core are never captured by the
+     * scheduled-announcement deferral machinery. The LinkManager sets this
+     * around announcements it broadcasts to a logic via announceOnAllLogics so
+     * that a mirrored announcement is transmitted immediately, instead of being
+     * spliced into an unrelated deferred announcement that happens to be
+     * capturing on the target logic at that moment. Held here in LogicBase for
+     * the same reason as the classification flags above.
+     */
+    void setDeferralSuppressed(bool enable) { m_deferral_suppressed = enable; }
+
+    /**
+     * @brief   Check if scheduled-announcement deferral is suppressed
+     * @return  Returns \em true if deferral capture is currently bypassed
+     */
+    bool deferralSuppressed(void) const { return m_deferral_suppressed; }
+
+    /**
      * @brief 	Get the configuration object associated with this logic core
      * @return	Returns the configuration object associated with this logic core
      */
@@ -395,6 +435,8 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     uint32_t              m_received_tg   = 0;
     bool                  m_announce_all_excluded = false;
     bool                  m_scheduled_announcement = false;
+    bool                  m_force_ctcss = false;
+    bool                  m_deferral_suppressed = false;
 
 };  /* class LogicBase */
 

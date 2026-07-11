@@ -115,6 +115,9 @@ add_test(NAME audio_modes
 add_test(NAME ctcss
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_ctcss.py)
+add_test(NAME scheduled_announcement_defer
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_scheduled_defer.py)
 
 # Generate config file with correct paths
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/svxlink.conf.in

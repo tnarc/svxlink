@@ -824,9 +824,21 @@ void LinkManager::playDtmf(LogicBase *src_logic, const std::string& digits, int 
 
 void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
 {
-    // Mirror the source's scheduled-announcement classification onto each
-    // target so CTCSS is keyed (or suppressed) the same way on every port.
+    // Mirror the source's scheduled-announcement classification and forced
+    // CTCSS state onto each target so CTCSS is keyed (or suppressed) the same
+    // way on every port. Forcing CTCSS matters for deferred announcements that
+    // interrupt active traffic: listeners filtering on CTCSS must still hear
+    // them on every port.
+    //
+    // The forced-CTCSS flag is deliberately NOT restored after playFile: the
+    // target only queues the audio here and plays it asynchronously, so the
+    // flag must stay set for the whole playback (any updateTxCtcss recompute on
+    // the target while it plays must still see it). The target clears it in its
+    // own allMsgsWritten when the announcement drains. The scheduled flag, by
+    // contrast, only selects the CTCSS category at the moment of the play call,
+    // so it is saved and restored as before.
   const bool sched = src_logic->scheduledAnnouncement();
+  const bool force = src_logic->forceCtcss();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -836,7 +848,12 @@ void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
     {
       const bool prev_sched = logic->scheduledAnnouncement();
       logic->setScheduledAnnouncement(sched);
+      logic->setForceCtcss(force);
+        // A mirrored announcement must play immediately on the target, not be
+        // captured by any scheduled-announcement deferral the target has open.
+      logic->setDeferralSuppressed(true);
       logic->playFile(path);
+      logic->setDeferralSuppressed(false);
       logic->setScheduledAnnouncement(prev_sched);
     }
   }
@@ -846,6 +863,7 @@ void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
 void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
 {
   const bool sched = src_logic->scheduledAnnouncement();
+  const bool force = src_logic->forceCtcss();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -854,8 +872,13 @@ void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
+        // forceCtcss is left set for the target's async playback; see
+        // playFileAll for the rationale.
       logic->setScheduledAnnouncement(sched);
+      logic->setForceCtcss(force);
+      logic->setDeferralSuppressed(true);
       logic->playSilence(length);
+      logic->setDeferralSuppressed(false);
       logic->setScheduledAnnouncement(prev_sched);
     }
   }
@@ -865,6 +888,7 @@ void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
 void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
 {
   const bool sched = src_logic->scheduledAnnouncement();
+  const bool force = src_logic->forceCtcss();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -873,8 +897,13 @@ void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
+        // forceCtcss is left set for the target's async playback; see
+        // playFileAll for the rationale.
       logic->setScheduledAnnouncement(sched);
+      logic->setForceCtcss(force);
+      logic->setDeferralSuppressed(true);
       logic->playTone(fq, amp, len);
+      logic->setDeferralSuppressed(false);
       logic->setScheduledAnnouncement(prev_sched);
     }
   }
@@ -885,6 +914,7 @@ void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
                               int amp, int len)
 {
   const bool sched = src_logic->scheduledAnnouncement();
+  const bool force = src_logic->forceCtcss();
   for (LogicMap::const_iterator it = logic_map.begin();
        it != logic_map.end(); ++it)
   {
@@ -893,8 +923,13 @@ void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
+        // forceCtcss is left set for the target's async playback; see
+        // playFileAll for the rationale.
       logic->setScheduledAnnouncement(sched);
+      logic->setForceCtcss(force);
+      logic->setDeferralSuppressed(true);
       logic->playDtmf(digits, amp, len);
+      logic->setDeferralSuppressed(false);
       logic->setScheduledAnnouncement(prev_sched);
     }
   }

@@ -170,10 +170,13 @@ Logic::Logic(void)
     currently_set_tx_ctrl_mode(Tx::TX_OFF), is_online(true),
     dtmf_digit_handler(0),                  state_pty(0),
     dtmf_ctrl_pty(0),                       command_pty(0),
-    m_ctcss_to_tg_timer(-1),                m_ctcss_to_tg_last_fq(-1.0f)
+    m_ctcss_to_tg_timer(-1),                m_ctcss_to_tg_last_fq(-1.0f),
+    m_defer_timeout_timer(-1)
 {
   rgr_sound_timer.expired.connect(sigc::hide(
         mem_fun(*this, &Logic::sendRgrSound)));
+  m_defer_timeout_timer.expired.connect(
+        mem_fun(*this, &Logic::deferTimeout));
   logic_con_in = new AudioSplitter;
   logic_con_out = new AudioSelector;
 } /* Logic::Logic */
@@ -420,6 +423,15 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
   cfg().getValue(name(), "FX_GAIN_NORMAL", fx_gain_normal);
   cfg().getValue(name(), "FX_GAIN_LOW", fx_gain_low);
 
+    // Defer scheduled announcements while the channel is busy and replay them
+    // at the first silence (keying CTCSS so all listeners hear them). If
+    // SCHEDULED_ANNOUNCEMENT_MAX_DELAY (seconds) is set and elapses while the
+    // channel is still busy, the announcement interrupts the active traffic.
+  cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_DEFER",
+                 m_defer_sched_announcements);
+  cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_MAX_DELAY",
+                 m_sched_announcement_max_delay);
+
   AudioSource *prev_rx_src = 0;
 
     // Create the RX object
@@ -648,7 +660,7 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
   event_handler->setAnnounceOnAllLogics.connect(
           mem_fun(*this, &Logic::setAnnounceOnAllLogics));
   event_handler->setScheduledAnnouncement.connect(
-          mem_fun(*this, &LogicBase::setScheduledAnnouncement));
+          mem_fun(*this, &Logic::onSetScheduledAnnouncement));
   event_handler->getConfigValue.connect(
           sigc::mem_fun(*this, &Logic::getConfigValue));
   event_handler->setConfigValue.connect(
@@ -803,6 +815,11 @@ void Logic::setEventVariable(const string& varname, const string& value)
 
 void Logic::playFile(const string& path)
 {
+  if (deferScheduledOp({DeferredPlayOp::FILE, path}))
+  {
+    return;
+  }
+
   msg_handler->playFile(path, report_events_as_idle);
 
   if (!msg_handler->isIdle())
@@ -822,6 +839,11 @@ void Logic::playFile(const string& path)
 
 void Logic::playSilence(int length)
 {
+  if (deferScheduledOp({DeferredPlayOp::SILENCE, "", length}))
+  {
+    return;
+  }
+
   msg_handler->playSilence(length, report_events_as_idle);
 
   if (!msg_handler->isIdle())
@@ -841,6 +863,11 @@ void Logic::playSilence(int length)
 
 void Logic::playTone(int fq, int amp, int len)
 {
+  if (deferScheduledOp({DeferredPlayOp::TONE, "", fq, amp, len}))
+  {
+    return;
+  }
+
   msg_handler->playTone(fq, amp, len, report_events_as_idle);
 
   if (!msg_handler->isIdle())
@@ -860,6 +887,11 @@ void Logic::playTone(int fq, int amp, int len)
 
 void Logic::playDtmf(const std::string& digits, int amp, int len)
 {
+  if (deferScheduledOp({DeferredPlayOp::DTMF, digits, amp, len}))
+  {
+    return;
+  }
+
   for (string::size_type i=0; i < digits.size(); ++i)
   {
     msg_handler->playDtmf(digits[i], amp, len);
@@ -1312,6 +1344,15 @@ void Logic::rptValveSetOpen(bool do_open)
 void Logic::checkIdle(void)
 {
   setIdle(getIdleState());
+
+    // If a scheduled announcement was deferred while the channel was busy,
+    // replay it now that the channel has gone idle (the first silence). The
+    // ops are moved out before replaying so the re-entrant checkIdle calls
+    // triggered by the replayed playback do not flush them again.
+  if (!m_deferred_ops.empty() && getIdleState())
+  {
+    flushDeferredAnnouncement();
+  }
 } /* Logic::checkIdle */
 
 
@@ -1357,6 +1398,9 @@ void Logic::allMsgsWritten(void)
      active_module->allMsgsWritten();
   }
 
+    // A deferred announcement that was replayed has now finished, so drop the
+    // forced CTCSS keying before recomputing the CTCSS enable state below.
+  setForceCtcss(false);
   updateTxCtcss(false, TX_CTCSS_ANNOUNCEMENT);
   updateTxCtcss(false, TX_CTCSS_SCHEDULED);
   checkIdle();
@@ -1846,9 +1890,139 @@ void Logic::updateTxCtcss(bool do_set, TxCtcssType type)
     tx_ctcss &= ~type;
   }
 
-  tx().enableCtcss((tx_ctcss & tx_ctcss_mask) != 0);
+  tx().enableCtcss(((tx_ctcss & tx_ctcss_mask) != 0) || forceCtcss());
 
 } /* Logic::updateTxCtcss */
+
+
+void Logic::onSetScheduledAnnouncement(bool enable)
+{
+  const bool was_set = scheduledAnnouncement();
+
+    // Rising edge: a scheduled announcement is about to be played. If deferral
+    // is enabled and the channel is currently busy with an active transmission,
+    // capture this announcement instead of playing it immediately.
+    //
+    // If an earlier scheduled announcement is still pending (its ops captured
+    // but not yet replayed), replace it with this one: scheduled announcements
+    // are periodic/idempotent (time, ID, ...), so the most recent is the
+    // relevant one and we avoid a stale backlog dumping out when the channel
+    // finally clears. The already-armed max-delay timer is deliberately left
+    // running (see the falling edge below) so the interrupt deadline is honored
+    // from the first deferral rather than being pushed back by each new one.
+  if (m_defer_sched_announcements && enable && !was_set && !m_replaying_deferred)
+  {
+    m_sched_busy_at_start = !getIdleState();
+    if (m_sched_busy_at_start)
+    {
+      m_deferred_ops.clear();
+    }
+  }
+
+  LogicBase::setScheduledAnnouncement(enable);
+
+    // Falling edge of a deferred announcement: it has now been fully captured.
+    // Arm the max-delay timer (only if not already armed by an earlier pending
+    // announcement) and, if the channel has already gone idle in the meantime,
+    // replay it right away.
+  if (m_defer_sched_announcements && !enable && was_set && m_sched_busy_at_start)
+  {
+    m_sched_busy_at_start = false;
+    if (!m_deferred_ops.empty())
+    {
+      if ((m_sched_announcement_max_delay > 0) &&
+          !m_defer_timeout_timer.isEnabled())
+      {
+        m_defer_timeout_timer.setTimeout(m_sched_announcement_max_delay * 1000);
+        m_defer_timeout_timer.setEnable(true);
+      }
+      checkIdle();
+    }
+  }
+} /* Logic::onSetScheduledAnnouncement */
+
+
+bool Logic::deferScheduledOp(const DeferredPlayOp& op)
+{
+    // Only capture a logic's own scheduled-announcement plays: never a replay
+    // in progress (m_replaying_deferred) and never a play injected by the
+    // LinkManager broadcast path (deferralSuppressed), which must be
+    // transmitted immediately rather than spliced into this logic's deferred
+    // announcement.
+  if (!(scheduledAnnouncement() && m_sched_busy_at_start &&
+        !m_replaying_deferred && !deferralSuppressed()))
+  {
+    return false;
+  }
+  DeferredPlayOp stored(op);
+  stored.announce_all = m_announce_on_all_logics;
+  m_deferred_ops.push_back(stored);
+  return true;
+} /* Logic::deferScheduledOp */
+
+
+void Logic::flushDeferredAnnouncement(void)
+{
+  m_defer_timeout_timer.setEnable(false);
+
+  std::vector<DeferredPlayOp> ops;
+  ops.swap(m_deferred_ops);
+  if (ops.empty())
+  {
+    return;
+  }
+
+    // Force the CTCSS tone on for the whole replayed announcement so that every
+    // listener on the repeater hears it, even though it was classified as a
+    // (normally tone-less) scheduled announcement. The flag is cleared in
+    // allMsgsWritten once playback has drained.
+  m_replaying_deferred = true;
+  setForceCtcss(true);
+    // The captured ops all belong to a scheduled announcement (they were only
+    // deferred because scheduledAnnouncement() was set when captured), but the
+    // flag was cleared on the falling edge before this replay runs. Restore it
+    // for the duration of the replay so the ops - and any mirror broadcasts of
+    // them - are classified as TX_CTCSS_SCHEDULED rather than a plain
+    // TX_CTCSS_ANNOUNCEMENT. The m_replaying_deferred guard above keeps this
+    // from re-triggering deferral capture.
+  const bool saved_sched = scheduledAnnouncement();
+  LogicBase::setScheduledAnnouncement(true);
+  const bool saved_announce_all = m_announce_on_all_logics;
+
+  msg_handler->begin();
+  for (const DeferredPlayOp& op : ops)
+  {
+    m_announce_on_all_logics = op.announce_all;
+    switch (op.type)
+    {
+      case DeferredPlayOp::FILE:
+        playFile(op.str);
+        break;
+      case DeferredPlayOp::SILENCE:
+        playSilence(op.arg1);
+        break;
+      case DeferredPlayOp::TONE:
+        playTone(op.arg1, op.arg2, op.arg3);
+        break;
+      case DeferredPlayOp::DTMF:
+        playDtmf(op.str, op.arg1, op.arg2);
+        break;
+    }
+  }
+  msg_handler->end();
+
+  m_announce_on_all_logics = saved_announce_all;
+  LogicBase::setScheduledAnnouncement(saved_sched);
+  m_replaying_deferred = false;
+} /* Logic::flushDeferredAnnouncement */
+
+
+void Logic::deferTimeout(Async::Timer *t)
+{
+    // The channel never went idle within the configured max delay. Interrupt
+    // the active traffic and play the deferred announcement anyway.
+  flushDeferredAnnouncement();
+} /* Logic::deferTimeout */
 
 
 void Logic::logicConInStreamStateChanged(bool is_active, bool is_idle)
