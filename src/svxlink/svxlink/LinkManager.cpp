@@ -411,10 +411,20 @@ void LinkManager::addLogic(LogicBase *logic)
     // to the logic input when MIX mode connections are activated.
   AudioMixer *mixer = new AudioMixer;
 
+    // Create a passthrough that lets the selector output feed the mixer as one
+    // more source. When the mixer drives the logic input (any MIX/DUCK/PRIORITY
+    // source active), the selector is routed here instead of being disconnected
+    // so FIRST-mode audio is mixed in rather than discarded. It is a permanent
+    // mixer source; the selector is (dis)connected from its input dynamically
+    // in updateMixerRouting.
+  AudioPassthrough *selector_feed = new AudioPassthrough;
+  mixer->addSource(selector_feed);
+
     // Register the new logic sink
   sinks[logic->name()].sink = logic->logicConIn();
   sinks[logic->name()].selector = selector;
   sinks[logic->name()].mixer = mixer;
+  sinks[logic->name()].selector_feed = selector_feed;
 
     // Now create a connection from the new logic source to each sink.
   for (SinkMap::iterator it=sinks.begin(); it != sinks.end(); ++it)
@@ -619,6 +629,11 @@ void LinkManager::deleteLogic(LogicBase *logic)
 
   delete selector;
   delete mixer;
+    // The selector_feed passthrough is a permanent source of the mixer but is
+    // owned by us (the mixer only owns its MixerSrc wrapper, which was just
+    // destroyed with the mixer). Deleting the selector above already detached
+    // it as the selector's sink, so it now has no source or sink.
+  delete sink_to_delete.selector_feed;
   sinks.erase(logic->name());
 
     // Finally remove the logic from the logic_map
@@ -970,6 +985,58 @@ float LinkManager::linkGain(const std::string& src_name,
 } /* LinkManager::linkGain */
 
 
+bool LinkManager::linkSelectorEnabled(const std::string& src_name,
+                                      const std::string& sink_name) const
+{
+  SinkMap::const_iterator sit = sinks.find(sink_name);
+  if (sit == sinks.end())
+  {
+    return false;
+  }
+  ConMap::const_iterator cit = sit->second.connectors.find(src_name);
+  if (cit == sit->second.connectors.end())
+  {
+    return false;
+  }
+  return sit->second.selector->autoSelectEnabled(cit->second);
+} /* LinkManager::linkSelectorEnabled */
+
+
+bool LinkManager::sinkSelectorRoutedToMixer(const std::string& sink_name) const
+{
+  SinkMap::const_iterator sit = sinks.find(sink_name);
+  if (sit == sinks.end())
+  {
+    return false;
+  }
+  return sit->second.selector->sink() == sit->second.selector_feed;
+} /* LinkManager::sinkSelectorRoutedToMixer */
+
+
+bool LinkManager::activateLinkByName(const std::string& name)
+{
+  LinkMap::iterator it = links.find(name);
+  if (it == links.end())
+  {
+    return false;
+  }
+  activateLink(it->second, "activateLinkByName");
+  return true;
+} /* LinkManager::activateLinkByName */
+
+
+bool LinkManager::deactivateLinkByName(const std::string& name)
+{
+  LinkMap::iterator it = links.find(name);
+  if (it == links.end())
+  {
+    return false;
+  }
+  deactivateLink(it->second, "deactivateLinkByName");
+  return true;
+} /* LinkManager::deactivateLinkByName */
+
+
 
 /****************************************************************************
  *
@@ -1129,14 +1196,26 @@ void LinkManager::updateConnections(void)
                  current_cons.begin(), current_cons.end(),
                  inserter(to_connect, to_connect.end()));
 
-    // Establish missing connections
+    // Record the newly-wanted connections. The actual selector/valve wiring is
+    // done by the reconciliation loop below, which handles both new and
+    // already-established connections uniformly.
   for (auto it = to_connect.begin(); it != to_connect.end(); ++it)
   {
-    const string &src_name = it->first;
-    const string &sink_name = it->second;
+    current_cons.insert(*it);
+  }
+
+    // Reconcile the effective audio mode for EVERY established connection, not
+    // just the ones added above. Two overlapping links can change the effective
+    // mode of a connection that stays wanted (e.g. activating a MIX link over a
+    // FIRST link) without adding or removing it from current_cons, so the
+    // selector/valve path has to be recomputed here as well. All of the
+    // operations below are idempotent.
+  for (const auto &con : current_cons)
+  {
+    const string &src_name = con.first;
+    const string &sink_name = con.second;
     SinkInfo &sink = sinks.at(sink_name);
 
-      // Get the effective audio mode for this connection
     LinkAudioMode mode = getEffectiveMode(src_name, sink_name);
 
     if (mode == LinkAudioMode::FIRST)
@@ -1147,13 +1226,10 @@ void LinkManager::updateConnections(void)
     }
     else // MIX, DUCK, or PRIORITY mode - all use mixer
     {
-        // MIX/DUCK/PRIORITY mode: disable selector, open mixer valve
+        // MIX/DUCK/PRIORITY mode: disable selector branch, open mixer valve
       sink.selector->disableAutoSelect(sink.connectors.at(src_name));
       sink.valves.at(src_name)->setOpen(true);
     }
-
-      // Store all connections in "current_cons" (current connections)
-    current_cons.insert(*it);
   }
 
     // Update mixer routing based on active MIX/DUCK/PRIORITY connections
@@ -1460,10 +1536,18 @@ void LinkManager::updateMixerRouting(void)
       // Route mixer or selector to logic input
     if (has_mix_connection)
     {
-        // Disconnect selector, connect mixer
-      if (sink.selector->isRegistered())
+        // The mixer drives the logic input. Rather than disconnecting the
+        // selector (which would silently discard any FIRST-mode source feeding
+        // this sink), route the selector output into the mixer via selector_feed
+        // so FIRST-mode arbitration is preserved among FIRST sources while the
+        // MIX/DUCK/PRIORITY sources mix in.
+      if (sink.selector->sink() != sink.selector_feed)
       {
-        sink.selector->unregisterSink();
+        if (sink.selector->isRegistered())
+        {
+          sink.selector->unregisterSink();
+        }
+        sink.selector->registerSink(sink.selector_feed);
       }
       if (!sink.mixer->isRegistered())
       {
@@ -1472,13 +1556,18 @@ void LinkManager::updateMixerRouting(void)
     }
     else
     {
-        // Disconnect mixer, connect selector
+        // No mixer sources: disconnect the mixer and drive the logic input
+        // directly from the selector.
       if (sink.mixer->isRegistered())
       {
         sink.mixer->unregisterSink();
       }
-      if (!sink.selector->isRegistered())
+      if (sink.selector->sink() != sink.sink)
       {
+        if (sink.selector->isRegistered())
+        {
+          sink.selector->unregisterSink();
+        }
         sink.selector->registerSink(sink.sink);
       }
     }
@@ -1656,6 +1745,18 @@ void LinkManager::updatePriorityForSink(const std::string& sink_name)
   for (auto& con_pair : sink.connectors)
   {
     const std::string& src_name = con_pair.first;
+
+      // Only touch connections that are actually established. addLogic wires a
+      // connector (and valve/amp) between every pair of logics, but only the
+      // connections present in current_cons belong to an activated link. Never
+      // enable a selector branch or rewrite an amp gain for a connection that
+      // is not currently wanted, otherwise a squelch event would resurrect
+      // audio between deactivated or unlinked logics.
+    if (current_cons.count(std::make_pair(src_name, sink_name)) == 0)
+    {
+      continue;
+    }
+
     LinkAudioMode mode = getEffectiveMode(src_name, sink_name);
     bool is_priority_src = isSourceFromPriorityLink(src_name, sink_name);
 

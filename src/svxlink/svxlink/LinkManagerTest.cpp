@@ -294,16 +294,20 @@ void test_announce_force_ctcss_propagation(void)
   teardown(lg);
 }
 
-// Overlapping links with different modes on shared logics.
+// Overlapping links with different modes on a shared sink. Link B (PRIORITY,
+// Logic3->Logic1) overrides link A (MIX) on the 3->1 path, so for sink Logic1
+// the source Logic3 is PRIORITY and the source Logic2 is MIX. When the priority
+// source transmits, the non-priority MIX source into Logic1 must be muted to
+// PRIORITY_MUTE_DB and restored again afterwards.
 void test_overlapping_links_different_modes(void)
 {
   cout << "test_overlapping_links_different_modes" << endl;
   Config cfg;
-  // Link A: MIX between 1-2-3
+  // Link A: MIX between Logic1, Logic2, Logic3
   cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
   cfg.setValue("A", "AUDIO_MODE", string("MIX"));
   cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
-  // Link B: PRIORITY from Logic3 to Logic1 (overlaps)
+  // Link B: PRIORITY from Logic3 to Logic1 (overlaps A on the 3->1 path)
   cfg.setValue("B", "CONNECT_LOGICS", string("Logic3,Logic1"));
   cfg.setValue("B", "AUDIO_MODE", string("PRIORITY"));
   cfg.setValue("B", "PRIORITY_MUTE_DB", string("-25"));
@@ -312,17 +316,149 @@ void test_overlapping_links_different_modes(void)
   buildLinks(cfg, "A,B", lg);
   LinkManager* lm = LinkManager::instance();
 
-  // Without priority active, MIX should allow 3->1 (but B is priority, A mix)
-  // Effective for 3->1 should be PRIORITY from B (higher precedence)
-  lg[2]->squelchStateChanged(true);  // Logic3 talks
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "MIX source full before priority");
   check(near_db(lm->linkGain("Logic3", "Logic1"), 0.0f),
-        "priority source full on overlapping link");
-  lg[0]->squelchStateChanged(true);  // Logic1 (non-pri in B) talks; should be muted on 3? wait, check 2->3 or similar
-  // For simplicity, verify a non-pri in mix is affected by pri link
-  check(near_db(lm->linkGain("Logic2", "Logic1"), -25.0f) ||
-        near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),  // depending on effective
-        "overlapping modes do not crash and apply precedence");
+        "priority source full before it transmits");
+
+  // Priority source Logic3 transmits into Logic1.
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic3", "Logic1"), 0.0f),
+        "priority source stays full while transmitting");
+  check(near_db(lm->linkGain("Logic2", "Logic1"), -25.0f),
+        "non-priority MIX source muted to -25 dB while priority active");
+
+  // Priority source stops (no hangtime configured): the MIX source is restored.
   lg[2]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "non-priority MIX source restored after priority stops");
+  teardown(lg);
+}
+
+// A squelch event must not resurrect audio on a deactivated or unlinked
+// connection. onSquelchStateChanged calls updatePriorityForSink for every sink;
+// that must only touch connections that belong to an activated link, otherwise
+// the first squelch event anywhere cross-connects logics behind the link
+// manager's back.
+void test_squelch_does_not_crossconnect(void)
+{
+  cout << "test_squelch_does_not_crossconnect" << endl;
+  Config cfg;
+  // Link A active: FIRST between Logic1 and Logic2.
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("A", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  // Link B deactivated: FIRST between Logic2 and Logic3.
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("B", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "A,B", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // Baseline: the active link is connected, the deactivated/unlinked pairs are
+  // not.
+  check(lm->linkSelectorEnabled("Logic1", "Logic2"),
+        "active FIRST link selector enabled");
+  check(!lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "deactivated link selector disabled before squelch");
+  check(!lm->linkSelectorEnabled("Logic1", "Logic3"),
+        "unlinked pair selector disabled before squelch");
+
+  // A squelch event anywhere must NOT enable the deactivated/unlinked
+  // connections.
+  lg[0]->squelchStateChanged(true);
+  check(lm->linkSelectorEnabled("Logic1", "Logic2"),
+        "active link still connected after squelch");
+  check(!lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "deactivated link NOT cross-connected by squelch event");
+  check(!lm->linkSelectorEnabled("Logic3", "Logic2"),
+        "deactivated link NOT cross-connected by squelch event (reverse)");
+  check(!lm->linkSelectorEnabled("Logic1", "Logic3"),
+        "unlinked pair NOT cross-connected by squelch event");
+  check(!lm->linkValveOpen("Logic2", "Logic3"),
+        "deactivated link valve stays closed after squelch event");
+
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// A sink that is simultaneously in an activated FIRST link and an activated MIX
+// link must keep BOTH sources audible: the MIX source through the mixer and the
+// FIRST source through the selector, which is routed INTO the mixer rather than
+// disconnected (which would silently discard the FIRST audio).
+void test_overlapping_first_and_mix(void)
+{
+  cout << "test_overlapping_first_and_mix" << endl;
+  Config cfg;
+  // Link A: FIRST between Logic1 and Logic2.
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("A", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  // Link B: MIX between Logic1 and Logic3 (overlaps on sink Logic1).
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("B", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "A,B", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // For sink Logic1: Logic2 is FIRST (selector path), Logic3 is MIX (mixer).
+  check(lm->linkSelectorEnabled("Logic2", "Logic1"),
+        "FIRST source uses the selector into Logic1");
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "FIRST source does not open a mixer valve");
+  check(lm->linkValveOpen("Logic3", "Logic1"),
+        "MIX source opens its mixer valve into Logic1");
+
+  // The mixer drives Logic1's input, and the selector (carrying the FIRST
+  // source) is routed into the mixer so the FIRST audio is preserved, not lost.
+  check(lm->sinkSelectorRoutedToMixer("Logic1"),
+        "selector routed into the mixer so FIRST audio is not discarded");
+  teardown(lg);
+}
+
+// The effective audio mode of an already-established connection must be
+// re-evaluated when an overlapping link changes it, in either activation
+// direction. Activating a MIX link over an existing FIRST connection moves that
+// connection onto the mixer path; deactivating it moves the connection back.
+void test_overlapping_activation_reconciles_mode(void)
+{
+  cout << "test_overlapping_activation_reconciles_mode" << endl;
+  Config cfg;
+  // Link A: FIRST between Logic1 and Logic2, active by default.
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("A", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  // Link B: MIX between the same pair, initially deactivated.
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("B", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "A,B", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  // Only A active: the 2->1 connection is FIRST (selector, valve closed).
+  check(lm->linkSelectorEnabled("Logic2", "Logic1"),
+        "FIRST-only: selector enabled");
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "FIRST-only: mixer valve closed");
+
+  // Activate the overlapping MIX link. The already-established 2->1 connection
+  // must be re-evaluated to MIX (mixer valve open, selector branch disabled)
+  // even though it was never removed from the current connection set.
+  lm->activateLinkByName("B");
+  check(lm->linkValveOpen("Logic2", "Logic1"),
+        "after MIX link activation: connection moved to mixer path");
+  check(!lm->linkSelectorEnabled("Logic2", "Logic1"),
+        "after MIX link activation: selector branch disabled");
+
+  // Deactivate the MIX link again: the connection must revert to FIRST.
+  lm->deactivateLinkByName("B");
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "after MIX link deactivation: connection reverts to selector path");
+  check(lm->linkSelectorEnabled("Logic2", "Logic1"),
+        "after MIX link deactivation: selector branch re-enabled");
   teardown(lg);
 }
 
@@ -391,7 +527,6 @@ class HangtimeTest : public sigc::trackable
       buildLinks(m_cfg, "Pri,Norm", m_lg);
       LinkManager* lm = LinkManager::instance();
 
-      lm->instance();
       m_lg[0]->squelchStateChanged(true);            // priority active
       check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
             "muted while priority active");
@@ -449,6 +584,9 @@ int main(void)
   test_announce_scheduled_propagation();
   test_announce_force_ctcss_propagation();
   test_overlapping_links_different_modes();
+  test_squelch_does_not_crossconnect();
+  test_overlapping_first_and_mix();
+  test_overlapping_activation_reconciles_mode();
   test_bad_audio_mode_falls_back();
   test_no_audio_mode_is_first();
 

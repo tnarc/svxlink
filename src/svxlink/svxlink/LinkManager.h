@@ -364,6 +364,47 @@ class LinkManager : public sigc::trackable
     float linkGain(const std::string& src_name,
                    const std::string& sink_name) const;
 
+    /**
+     * @brief   Check if a connection is auto-selected on the sink's selector
+     * @param   src_name  The source logic name
+     * @param   sink_name The sink logic name
+     * @return  \em true if the src->sink FIRST-mode selector branch is enabled
+     *
+     * Introspection helper (used by tests and diagnostics). Returns \em false
+     * if no such connection exists.
+     */
+    bool linkSelectorEnabled(const std::string& src_name,
+                             const std::string& sink_name) const;
+
+    /**
+     * @brief   Check if a sink's selector output is routed into its mixer
+     * @param   sink_name The sink logic name
+     * @return  \em true if the selector feeds the mixer (mixer engaged) rather
+     *          than driving the logic input directly
+     *
+     * Introspection helper (used by tests and diagnostics).
+     */
+    bool sinkSelectorRoutedToMixer(const std::string& sink_name) const;
+
+    /**
+     * @brief   Activate a link by its configuration section name
+     * @param   name The link name
+     * @return  \em true if the link exists
+     *
+     * Test/diagnostics helper to drive link activation without a DTMF command.
+     */
+    bool activateLinkByName(const std::string& name);
+
+    /**
+     * @brief   Deactivate a link by its configuration section name
+     * @param   name The link name
+     * @return  \em true if the link exists
+     *
+     * Test/diagnostics helper to drive link deactivation without a DTMF
+     * command.
+     */
+    bool deactivateLinkByName(const std::string& name);
+
   private:
     struct LogicProperties
     {
@@ -413,12 +454,17 @@ class LinkManager : public sigc::trackable
     typedef std::map<std::string, Async::AudioAmp *> AmpMap;
     struct SinkInfo
     {
-      Async::AudioSink      *sink;
-      Async::AudioSelector  *selector;      // Used in FIRST mode
-      Async::AudioMixer     *mixer;         // Used in MIX/DUCK mode
-      ConMap                connectors;     // Passthroughs for selector
-      ValveMap              valves;         // Valves for mixer
-      AmpMap                amps;           // Gain control for DUCK mode
+      Async::AudioSink        *sink;
+      Async::AudioSelector    *selector;      // Used in FIRST mode
+      Async::AudioMixer       *mixer;         // Used in MIX/DUCK mode
+        // Passthrough that feeds the selector output into the mixer as one more
+        // source while the mixer drives the logic input. This preserves
+        // FIRST-mode arbitration among FIRST sources when the same sink also
+        // has MIX/DUCK/PRIORITY sources mixing in.
+      Async::AudioPassthrough *selector_feed;
+      ConMap                  connectors;     // Passthroughs for selector
+      ValveMap                valves;         // Valves for mixer
+      AmpMap                  amps;           // Gain control for DUCK mode
     };
     typedef std::map<std::string, SourceInfo> SourceMap;
     typedef std::map<std::string, SinkInfo>   SinkMap;
