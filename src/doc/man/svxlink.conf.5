@@ -1164,6 +1164,15 @@ simultaneously, they are mixed together.
 .RE
 .IP
 Example: AUDIO_MODE=PRIORITY
+.IP
+DUCK and PRIORITY both key off a member logic's local squelch state (whether
+it is currently receiving traffic). This is only reported by logic cores
+based on the Logic base class (e.g. SimplexLogic, RepeaterLogic). A logic of
+TYPE=Reflector or TYPE=ReflectorV2 never reports a local squelch state, so
+including one of those in a DUCK or PRIORITY link will never trigger
+ducking/preemption based on that member's own traffic (a warning is printed
+at startup if this is detected). The other, Logic-based, members of the same
+link are unaffected and continue to work normally.
 .TP
 .B DUCK_LEVEL_DB
 The amount of gain reduction (in dB) to apply to incoming link audio when

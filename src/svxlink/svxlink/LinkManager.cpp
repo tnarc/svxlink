@@ -355,6 +355,37 @@ bool LinkManager::initialize(Async::Config &cfg,
       }
     }
 
+      // DUCK and PRIORITY both key off a member logic's local squelch state
+      // (LogicBase::squelchStateChanged), which is only ever emitted by the
+      // Logic base class (Simplex/Repeater logics). ReflectorLogic and
+      // ReflectorV2Logic derive directly from LogicBase and never emit it,
+      // so a member of that type can never be the "local" side of a
+      // DUCK/PRIORITY link - warn at config time rather than silently never
+      // ducking/preempting.
+    if ((link.audio_mode == LinkAudioMode::DUCK) ||
+        (link.audio_mode == LinkAudioMode::PRIORITY))
+    {
+      for (const auto& logic_prop : link.logic_props)
+      {
+        const std::string& logic_name = logic_prop.first;
+        std::string logic_type;
+        cfg.getValue(logic_name, "TYPE", logic_type);
+        if ((logic_type == "Reflector") || (logic_type == "ReflectorV2"))
+        {
+          std::cerr << "*** WARNING: Link " << link.name << " uses AUDIO_MODE="
+                    << ((link.audio_mode == LinkAudioMode::DUCK) ?
+                        "DUCK" : "PRIORITY")
+                    << " but member logic \"" << logic_name
+                    << "\" is TYPE=" << logic_type << ", which never reports "
+                       "a local squelch state. DUCK/PRIORITY audio "
+                       "ducking/preemption keyed off this logic's own "
+                       "traffic will never trigger; see the AUDIO_MODE "
+                       "documentation in svxlink.conf(5) for details."
+                    << std::endl;
+        }
+      }
+    }
+
       // Parse DUCK_LEVEL_DB configuration (default: -12 dB)
     cfg.getValue(link.name, "DUCK_LEVEL_DB", link.duck_level_db);
 
