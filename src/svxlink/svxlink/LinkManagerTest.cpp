@@ -158,6 +158,40 @@ void test_mix_opens_valves(void)
   teardown(lg);
 }
 
+// Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
+// Each remaining sink's mixer holds an amp sourced from the deleted logic
+// (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
+// as part of the valve/splitter teardown, so the mixer's wrapper for it must
+// be reaped (AudioMixer::removeSource), not merely orphaned or double-freed.
+void test_delete_logic_no_crash(void)
+{
+  cout << "test_delete_logic_no_crash" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(lm->linkValveOpen("Logic2", "Logic3"), "valve open before delete");
+
+    // Delete Logic1 while Logic2 and Logic3 remain linked. Logic2's and
+    // Logic3's mixers each held an amp sourced from Logic1's splitter.
+  lm->deleteLogic(lg[0]);
+
+  check(lm->linkValveOpen("Logic2", "Logic3"),
+        "remaining connection unaffected by deleting an unrelated logic");
+
+  delete lg[0];
+  lg[0] = nullptr;
+
+    // deleteInstance() -> ~LinkManager() will deleteLogic() Logic2 and
+    // Logic3 in turn, each again reaping a MixerSrc from the other's mixer;
+    // if that reaping ever double-frees, this aborts/crashes the test run.
+  teardown(lg);
+}
+
 // DUCK: incoming amp drops to DUCK_LEVEL_DB while the sink squelch is open,
 // and is restored to 0 dB when it closes.
 void test_duck_gain(void)
@@ -743,6 +777,7 @@ int main(void)
 
     // Synchronous tests (no timers needed)
   test_mix_opens_valves();
+  test_delete_logic_no_crash();
   test_duck_gain();
   test_duck_gain_reset_on_deactivate_reactivate();
   test_priority_gain();
