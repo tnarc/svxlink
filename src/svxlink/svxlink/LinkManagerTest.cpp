@@ -353,6 +353,11 @@ void test_announce_scheduled_propagation(void)
 // the flag must stay set for the whole playback and is cleared by the target's
 // own allMsgsWritten when the announcement drains (a real Logic; the FakeLogic
 // here does not model that, so the flag remains set after the call).
+//
+// Critically, the broadcast path must never *lower* an already-set target
+// flag: if the target is itself in the middle of a still-draining forced
+// announcement, a later non-forced broadcast from elsewhere must not clobber
+// it and drop CTCSS partway through.
 void test_announce_force_ctcss_propagation(void)
 {
   cout << "test_announce_force_ctcss_propagation" << endl;
@@ -373,14 +378,18 @@ void test_announce_force_ctcss_propagation(void)
         "target force-CTCSS flag left set for async playback (not restored)");
   check(lg[1]->files_played == 0, "excluded logic still skipped");
 
-    // A non-forced broadcast clears it again (force is set to the source value
-    // on every broadcast), and the target does not see force at play time.
+    // A later non-forced broadcast must NOT clobber the target's own
+    // still-set forceCtcss: the target's flag belongs to its own draining
+    // announcement, not to whatever a different source is currently playing.
+    // The target therefore still sees (and keeps) forced CTCSS here, even
+    // though this second broadcast's source is not forcing it.
   lg[0]->setForceCtcss(false);
   lm->playFileAll(lg[0], "dummy.wav");
-  check(lg[2]->files_played == 2 && !lg[2]->saw_force,
-        "target does not see forced CTCSS when source does not force it");
-  check(!lg[2]->forceCtcss(),
-        "non-forced broadcast leaves the target un-forced");
+  check(lg[2]->files_played == 2 && lg[2]->saw_force,
+        "target's own forced-CTCSS state is preserved through a "
+        "non-forced broadcast");
+  check(lg[2]->forceCtcss(),
+        "non-forced broadcast must not lower the target's own forced-CTCSS flag");
   teardown(lg);
 }
 

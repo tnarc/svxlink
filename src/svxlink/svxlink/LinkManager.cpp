@@ -863,7 +863,15 @@ void LinkManager::playFileAll(LogicBase *src_logic, const std::string& path)
     {
       const bool prev_sched = logic->scheduledAnnouncement();
       logic->setScheduledAnnouncement(sched);
-      logic->setForceCtcss(force);
+        // Never lower the target's forceCtcss from the broadcast path: it may
+        // be long-lived for the target's own still-draining deferred
+        // announcement and is only ever cleared by the target's own
+        // allMsgsWritten once its whole queue (including this mirrored
+        // audio) has drained.
+      if (force)
+      {
+        logic->setForceCtcss(true);
+      }
         // A mirrored announcement must play immediately on the target, not be
         // captured by any scheduled-announcement deferral the target has open.
       logic->setDeferralSuppressed(true);
@@ -887,10 +895,13 @@ void LinkManager::playSilenceAll(LogicBase *src_logic, int length)
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
-        // forceCtcss is left set for the target's async playback; see
-        // playFileAll for the rationale.
+        // forceCtcss is never lowered here; see playFileAll for the
+        // rationale.
       logic->setScheduledAnnouncement(sched);
-      logic->setForceCtcss(force);
+      if (force)
+      {
+        logic->setForceCtcss(true);
+      }
       logic->setDeferralSuppressed(true);
       logic->playSilence(length);
       logic->setDeferralSuppressed(false);
@@ -912,10 +923,13 @@ void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
-        // forceCtcss is left set for the target's async playback; see
-        // playFileAll for the rationale.
+        // forceCtcss is never lowered here; see playFileAll for the
+        // rationale.
       logic->setScheduledAnnouncement(sched);
-      logic->setForceCtcss(force);
+      if (force)
+      {
+        logic->setForceCtcss(true);
+      }
       logic->setDeferralSuppressed(true);
       logic->playTone(fq, amp, len);
       logic->setDeferralSuppressed(false);
@@ -938,10 +952,13 @@ void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
         !logic->announceAllExcluded())
     {
       const bool prev_sched = logic->scheduledAnnouncement();
-        // forceCtcss is left set for the target's async playback; see
-        // playFileAll for the rationale.
+        // forceCtcss is never lowered here; see playFileAll for the
+        // rationale.
       logic->setScheduledAnnouncement(sched);
-      logic->setForceCtcss(force);
+      if (force)
+      {
+        logic->setForceCtcss(true);
+      }
       logic->setDeferralSuppressed(true);
       logic->playDtmf(digits, amp, len);
       logic->setDeferralSuppressed(false);
