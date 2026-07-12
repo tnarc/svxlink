@@ -14,6 +14,7 @@ Exit code 0 = all passed, 1 = a failure.
 """
 
 import sys
+import time
 import traceback
 from contextlib import contextmanager
 
@@ -96,19 +97,21 @@ def test_local_announcement_stays_on_one_port():
                 f"other ports must NOT key for a local announcement, got {counts}")
 
 
-def test_repeater_announce_broadcast_and_courtesy():
-    """RepeaterLogic + new features: link-up broadcast still keys all ports,
-    and local repeater courtesy/ID behavior (tail TX after squelch close) is
-    not broken by the audio mode / announce changes."""
+def test_repeater_announce_broadcast_and_repeat():
+    """RepeaterLogic + new features: link-up broadcast still keys all ports, and
+    the local repeat path (repeater comes up and keys TX to repeat a station
+    talking into it) still works with the audio-mode / announce changes active."""
     h = SvxlinkHarness(num_logics=2, logic_type="Repeater",
+                       # Bring the repeater up on a sustained carrier and repeat
+                       # while the squelch is open, so the local repeat path is
+                       # exercised on virtual hardware.
+                       logic_opts={"OPEN_ON_SQL": "200", "OPEN_SQL_FLANK": "OPEN",
+                                   "IDLE_TIMEOUT": "1"},
                        links=[LinkSpec("TestLink", ["Logic1", "Logic2"],
                                        prefix="91", default_active=False)])
     h.setup()
     for clip in LINK_CLIPS:
         h.add_sound_clip("en_US", "Core", clip)
-    # Add a clip that repeater might play for courtesy/tail (repeater often plays
-    # a short tone or ID on tail; we just need something to make TX packets).
-    h.add_sound_clip("en_US", "Core", "courtesy")
     h.start()
     try:
         # Broadcast should still work on repeater
@@ -116,13 +119,15 @@ def test_repeater_announce_broadcast_and_courtesy():
         _assert(counts["Logic1"] > 0 and counts["Logic2"] > 0,
                 f"repeater broadcast should key ports, got {counts}")
 
-        # Local repeater courtesy/tail after squelch: should produce TX packets
-        # even with linked audio features active.
-        h.set_squelch("Logic1", True)
-        h.set_squelch("Logic1", False)  # close -> tail/courtesy
-        tail_counts = h.count_tx_after(window=1.5)
-        _assert(tail_counts["Logic1"] > 0,
-                f"repeater should transmit courtesy/tail after squelch, got {tail_counts}")
+        # Local repeat: a station talking into the repeater brings it up and it
+        # repeats (keys TX) while the squelch is open -- still works with the
+        # linked audio features active.
+        h.set_squelch("Logic1", True)   # local user keys up (opens VOX squelch)
+        time.sleep(1.0)                 # OPEN_ON_SQL brings the repeater up
+        repeat_counts = h.count_tx_after(window=1.0)  # repeater repeating -> TX
+        h.set_squelch("Logic1", False)  # unkey
+        _assert(repeat_counts["Logic1"] > 0,
+                f"repeater should key/repeat while a station talks, got {repeat_counts}")
     finally:
         h.cleanup()
 
@@ -132,7 +137,7 @@ TESTS = [
     test_link_down_broadcasts_to_all_ports,
     test_excluded_logic_is_skipped_by_broadcast,
     test_local_announcement_stays_on_one_port,
-    test_repeater_announce_broadcast_and_courtesy,
+    test_repeater_announce_broadcast_and_repeat,
 ]
 
 

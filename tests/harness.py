@@ -7,7 +7,9 @@ with no sound card and no kernel modules:
   * RX  -> ``TYPE=Local`` with ``AUDIO_DEV=udp:...`` (the test driver sends PCM)
   * TX  -> ``TYPE=Local`` with ``AUDIO_DEV=udp:...`` (the driver captures PCM);
            presence of TX packets means the logic is transmitting.
-  * Squelch -> ``SQL_DET=PTY`` (write 'O'/'Z' to a PTY to open/close)
+  * Squelch -> ``SQL_DET=VOX``; a station "talks" by streaming a tone into the
+               RX (``start_talk``/``stop_talk``/``set_squelch``), which opens
+               the VOX squelch; stopping the tone closes it.
   * Commands -> ``DTMF_CTRL_PTY`` (write digits to inject DTMF, no audio needed)
   * State -> ``STATE_PTY`` (read published state events)
 
@@ -55,7 +57,6 @@ class Logic:
         self.name = name
         self.rx_port = _free_udp_port()        # svxlink binds this (RX inject)
         self.tx_port = _free_udp_port()        # driver binds this (TX capture)
-        self.sql_pty = os.path.join(tmp, f"{name}_sql")
         self.dtmf_pty = os.path.join(tmp, f"{name}_dtmf")
         self.state_pty = os.path.join(tmp, f"{name}_state")
         # The driver binds the TX capture socket up front; svxlink's TX side
@@ -63,14 +64,13 @@ class Logic:
         self.tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.tx_sock.bind(("127.0.0.1", self.tx_port))
         self.tx_sock.setblocking(False)
-        # Persistent write fds to the control PTYs. Opening and closing a PTY
-        # slave on every command hangs up the master, so the fds are opened
-        # once (lazily, after svxlink creates the symlinks) and reused.
-        self.sql_fd = None
+        # Persistent write fd to the DTMF control PTY. Opening and closing a
+        # PTY slave on every command hangs up the master, so the fd is opened
+        # once (lazily, after svxlink creates the symlink) and reused.
         self.dtmf_fd = None
 
     def close(self):
-        for fd in (self.sql_fd, self.dtmf_fd):
+        for fd in (self.dtmf_fd,):
             if fd is not None:
                 try:
                     os.close(fd)
@@ -350,11 +350,16 @@ class SvxlinkHarness:
             l.dtmf_fd = os.open(l.dtmf_pty, os.O_WRONLY)
         os.write(l.dtmf_fd, digits.encode())
 
-    def set_squelch(self, logic_name, is_open):
-        l = self.by_name[logic_name]
-        if l.sql_fd is None:
-            l.sql_fd = os.open(l.sql_pty, os.O_WRONLY)
-        os.write(l.sql_fd, b"O\n" if is_open else b"Z\n")
+    def set_squelch(self, logic_name, is_open, freq=1000):
+        """Open or close a logic's squelch by driving its VOX detector: stream
+        a tone into the receiver (open) or stop it (close). The RX uses
+        SQL_DET=VOX, so an open only takes effect once the VOX filter fills
+        (tens of ms) -- allow a brief settle (e.g. time.sleep) before asserting
+        on squelch-dependent behaviour. Thin wrapper over start_talk/stop_talk."""
+        if is_open:
+            self.start_talk(logic_name, freq)
+        else:
+            self.stop_talk(logic_name)
 
     # -- observe -------------------------------------------------------------
     def _drain(self, l):
