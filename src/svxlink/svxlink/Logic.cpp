@@ -830,7 +830,8 @@ void Logic::playFile(const string& path)
 
   checkIdle();
 
-  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  if (m_announce_on_all_logics && !deferralSuppressed() &&
+      LinkManager::hasInstance())
   {
     LinkManager::instance()->playFileAll(this, path);
   }
@@ -854,7 +855,8 @@ void Logic::playSilence(int length)
 
   checkIdle();
 
-  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  if (m_announce_on_all_logics && !deferralSuppressed() &&
+      LinkManager::hasInstance())
   {
     LinkManager::instance()->playSilenceAll(this, length);
   }
@@ -878,11 +880,12 @@ void Logic::playTone(int fq, int amp, int len)
 
   checkIdle();
 
-  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  if (m_announce_on_all_logics && !deferralSuppressed() &&
+      LinkManager::hasInstance())
   {
     LinkManager::instance()->playToneAll(this, fq, amp, len);
   }
-} /* Logic::playSilence */
+} /* Logic::playTone */
 
 
 void Logic::playDtmf(const std::string& digits, int amp, int len)
@@ -906,7 +909,8 @@ void Logic::playDtmf(const std::string& digits, int amp, int len)
 
   checkIdle();
 
-  if (m_announce_on_all_logics && LinkManager::hasInstance())
+  if (m_announce_on_all_logics && !deferralSuppressed() &&
+      LinkManager::hasInstance())
   {
     LinkManager::instance()->playDtmfAll(this, digits, amp, len);
   }
