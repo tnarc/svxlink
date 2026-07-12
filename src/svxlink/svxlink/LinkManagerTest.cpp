@@ -80,17 +80,26 @@ class FakeLogic : public LogicBase
 
       // Count broadcast playback so tests can assert which logics were reached,
       // and record the scheduled-announcement classification and forced-CTCSS
-      // state seen at play time.
-    void playFile(const std::string&) override
+      // state seen at play time. When announce_on_all_logics is set, mirror
+      // the real Logic::playFile broadcast tail (guarded by deferralSuppressed
+      // exactly as the real one is) so the re-entrancy guard can be exercised
+      // without a full Logic.
+    void playFile(const std::string& path) override
     {
       ++files_played;
       saw_scheduled = scheduledAnnouncement();
       saw_force = forceCtcss();
+      if (announce_on_all_logics && !deferralSuppressed() &&
+          LinkManager::hasInstance())
+      {
+        LinkManager::instance()->playFileAll(this, path);
+      }
     }
 
     int files_played = 0;
     bool saw_scheduled = false;
     bool saw_force = false;
+    bool announce_on_all_logics = false;
 
   private:
     AudioPassthrough *m_in;
@@ -372,6 +381,36 @@ void test_announce_force_ctcss_propagation(void)
         "target does not see forced CTCSS when source does not force it");
   check(!lg[2]->forceCtcss(),
         "non-forced broadcast leaves the target un-forced");
+  teardown(lg);
+}
+
+// A mirrored broadcast play must not itself re-broadcast: if two (or more)
+// logics both have announce-on-all-logics enabled, a single top-level play
+// must reach every other logic exactly once, not recurse back and forth
+// between them. LinkManager::playFileAll suppresses deferral
+// (setDeferralSuppressed(true)) around each mirrored play specifically so the
+// mirrored logic's own broadcast tail can detect "this is a mirror, don't
+// re-broadcast" and skip itself.
+void test_announce_broadcast_no_recursion(void)
+{
+  cout << "test_announce_broadcast_no_recursion" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+
+    // Logic1 and Logic2 both broadcast to every other logic; Logic3 does not.
+  lg[0]->announce_on_all_logics = true;
+  lg[1]->announce_on_all_logics = true;
+
+    // Top-level play on Logic1 (as if called from Logic::playFile itself).
+  lg[0]->playFile("dummy.wav");
+
+  check(lg[0]->files_played == 1, "source plays exactly once, no recursion");
+  check(lg[1]->files_played == 1,
+        "mirrored target plays exactly once, its own broadcast tail is "
+        "suppressed for the mirror");
+  check(lg[2]->files_played == 1, "non-broadcasting target plays exactly once");
   teardown(lg);
 }
 
@@ -666,6 +705,7 @@ int main(void)
   test_announce_all_exclude();
   test_announce_scheduled_propagation();
   test_announce_force_ctcss_propagation();
+  test_announce_broadcast_no_recursion();
   test_overlapping_links_different_modes();
   test_squelch_does_not_crossconnect();
   test_overlapping_first_and_mix();
