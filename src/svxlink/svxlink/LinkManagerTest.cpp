@@ -204,6 +204,87 @@ void test_priority_gain(void)
   teardown(lg);
 }
 
+// A member's OWN local transmission must not arm hangtime muting of that
+// member's incoming audio. Logic3 is the "hub": it is in a PRIORITY link with
+// Logic1 and also receives a MIX source (Logic2). When a local user talks on
+// Logic3, Logic3 is a priority source into Logic1 (not into itself), so the
+// hangtime that follows applies to Logic1, never to Logic3 - Logic2->Logic3
+// must stay unmuted throughout, even with PRIORITY_HANGTIME configured.
+void test_hub_traffic_no_hangtime_mute(void)
+{
+  cout << "test_hub_traffic_no_hangtime_mute" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "MIX source full before any local traffic");
+
+    // Local traffic on the hub (Logic3): Logic3 is a source, not a sink for
+    // its own audio, so its incoming MIX source must stay unmuted.
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "hub local traffic does not mute the hub's own incoming audio");
+
+    // Unkey the hub: the buggy behaviour armed hangtime keyed off the hub's own
+    // squelch and muted Logic2->Logic3 for the whole hangtime. It must not.
+  lg[2]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "hub local transmission does not arm hangtime muting on unkey");
+  teardown(lg);
+}
+
+// Deactivating a PRIORITY link while its hangtime timer is running must reset
+// the hangtime state: the held-muted sinks are restored and the timer stopped,
+// so reactivating the link does not resurrect a spurious mute from a frozen
+// timer.
+void test_priority_hangtime_reset_on_deactivate(void)
+{
+  cout << "test_priority_hangtime_reset_on_deactivate" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+    // Priority source transmits then unkeys: hangtime arms, Logic2->Logic3
+    // held muted.
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "muted while priority active");
+  lg[0]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "still muted at hangtime start");
+
+    // Deactivate the PRIORITY link mid-hangtime: the mute must be released and
+    // the timer stopped.
+  lm->deactivateLinkByName("Pri");
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "mute released when link deactivated mid-hangtime");
+
+    // Reactivate: the frozen timer must not resurrect the mute.
+  lm->activateLinkByName("Pri");
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "no spurious mute after reactivation");
+  teardown(lg);
+}
+
 // Announce-on-all-logics: a broadcast (playFileAll) plays on every logic
 // except the source and any logic with ANNOUNCE_ALL_EXCLUDE set.
 void test_announce_all_exclude(void)
@@ -580,6 +661,8 @@ int main(void)
   test_mix_opens_valves();
   test_duck_gain();
   test_priority_gain();
+  test_hub_traffic_no_hangtime_mute();
+  test_priority_hangtime_reset_on_deactivate();
   test_announce_all_exclude();
   test_announce_scheduled_propagation();
   test_announce_force_ctcss_propagation();
