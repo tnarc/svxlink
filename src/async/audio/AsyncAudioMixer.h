@@ -131,6 +131,20 @@ class AudioMixer : public sigc::trackable, public Async::AudioSource
     void addSource(AudioSource *source);
 
     /**
+     * @brief 	Remove a previously added audio source from the mixer
+     * @param 	source The audio source to remove
+     *
+     * Reaps the internal MixerSrc wrapper that addSource created for this
+     * source. Without this, deleting a source that was added here (but is
+     * owned/destroyed elsewhere) leaves an orphaned wrapper in this mixer's
+     * source list forever, growing without bound over repeated add/delete
+     * cycles. Must be called BEFORE the source itself is destroyed: the
+     * wrapper is found by matching its currently registered source pointer,
+     * which is only valid while the source is still alive and registered.
+     */
+    void removeSource(AudioSource *source);
+
+    /**
      * @brief Resume audio output to the sink
      * 
      * This function will be called when the registered audio sink is ready

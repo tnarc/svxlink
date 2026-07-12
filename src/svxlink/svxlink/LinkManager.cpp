@@ -582,6 +582,17 @@ void LinkManager::deleteLogic(LogicBase *logic)
     ValveMap::iterator vmit = sink_info.valves.find(logic->name());
     if (vmit != sink_info.valves.end())
     {
+        // Reap the mixer's wrapper for this amp before the amp itself is
+        // destroyed below. Without this, sink_info.mixer (which belongs to
+        // a logic that is NOT being deleted and so survives this call)
+        // would keep an orphaned MixerSrc pointing at a soon-to-be-deleted
+        // amp forever, since AudioMixer has no other way to reap it.
+      AmpMap::iterator amit = sink_info.amps.find(logic->name());
+      if (amit != sink_info.amps.end())
+      {
+        sink_info.mixer->removeSource(amit->second);
+      }
+
       vmit->second->setOpen(false);
         // removeSink deletes the valve, since it was added as a managed sink
         // of the splitter; that in turn deletes the valve's managed amp.

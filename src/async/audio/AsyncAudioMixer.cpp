@@ -215,6 +215,22 @@ void AudioMixer::addSource(AudioSource *source)
 } /* AudioMixer::addSource */
 
 
+void AudioMixer::removeSource(AudioSource *source)
+{
+  for (list<MixerSrc *>::iterator it = sources.begin(); it != sources.end();
+       ++it)
+  {
+    if ((*it)->source() == source)
+    {
+      MixerSrc *mixer_src = *it;
+      sources.erase(it);
+      delete mixer_src;
+      return;
+    }
+  }
+} /* AudioMixer::removeSource */
+
+
 void AudioMixer::resumeOutput(void)
 {
   //printf("AudioMixer::resumeOutput\n");
