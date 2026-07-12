@@ -1188,6 +1188,11 @@ void LinkManager::updateConnections(void)
                  want.begin(), want.end(),
                  inserter(to_disconnect, to_disconnect.end()));
 
+    // Sinks touched by a valve open/close below need their duck/priority
+    // gain recomputed once the connection set has settled (see the loop at
+    // the bottom of this function).
+  std::set<std::string> affected_sinks;
+
   for (auto it = to_disconnect.begin(); it != to_disconnect.end(); ++it)
   {
     const string &src_name = it->first;
@@ -1200,8 +1205,18 @@ void LinkManager::updateConnections(void)
       // Close the mixer valve for this connection
     sink.valves.at(src_name)->setOpen(false);
 
+      // Reset the amp to unity gain. Without this, a stale DUCK_LEVEL_DB or
+      // PRIORITY_MUTE_DB gain left over from before this link was
+      // deactivated would otherwise survive a later reactivation of the
+      // link (updateDuckingForSink/updatePriorityForSink only rewrite the
+      // gain for connections whose *current* effective mode calls for it,
+      // so a connection that drops out of DUCK/PRIORITY mode here is never
+      // touched again until this reset).
+    sink.amps.at(src_name)->setGain(0);
+
       // Delete the link connect information
     current_cons.erase(*it);
+    affected_sinks.insert(sink_name);
   }
 
     // Calculate the difference between the wanted connection set and the
@@ -1218,7 +1233,18 @@ void LinkManager::updateConnections(void)
     // already-established connections uniformly.
   for (auto it = to_connect.begin(); it != to_connect.end(); ++it)
   {
+    const string &src_name = it->first;
+    const string &sink_name = it->second;
+
+      // Reset to unity gain before the connection is (re-)established: a
+      // freshly (re)activated connection must never inherit a stale
+      // DUCK_LEVEL_DB/PRIORITY_MUTE_DB gain left on this amp by a previous
+      // activation. The recompute loop below then applies whatever gain is
+      // actually appropriate for the current squelch/priority state.
+    sinks.at(sink_name).amps.at(src_name)->setGain(0);
+
     current_cons.insert(*it);
+    affected_sinks.insert(sink_name);
   }
 
     // Reconcile the effective audio mode for EVERY established connection, not
@@ -1251,6 +1277,24 @@ void LinkManager::updateConnections(void)
 
     // Update mixer routing based on active MIX/DUCK/PRIORITY connections
   updateMixerRouting();
+
+    // Recompute duck/priority gain for every sink touched by a valve
+    // open/close above, using the *current* squelch/priority state. This
+    // ensures a sink whose connection just became active picks up the
+    // correct gain immediately (e.g. reactivating a DUCK link while the
+    // sink's squelch happens to already be open) instead of waiting for the
+    // next squelch transition to notice.
+  for (const auto &sink_name : affected_sinks)
+  {
+    bool squelch_open = false;
+    LogicMap::iterator logic_it = logic_map.find(sink_name);
+    if (logic_it != logic_map.end())
+    {
+      squelch_open = logic_it->second.squelch_open;
+    }
+    updateDuckingForSink(sink_name, squelch_open);
+    updatePriorityForSink(sink_name);
+  }
 } /* LinkManager::updateConnections */
 
 
