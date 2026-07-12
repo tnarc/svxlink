@@ -1265,8 +1265,28 @@ void LinkManager::deactivateLink(Link &link, const std::string& reason)
     }
     std::cout << std::endl;
     link.is_activated = false;
+
+      // Reset any priority hangtime state. checkPriorityHangtime skips
+      // deactivated links, so a still-running timer (and the remembered set of
+      // preempted sinks) would otherwise be frozen and resume a spurious mute
+      // when the link is reactivated. Stop the timer, remember which sinks were
+      // held muted, clear the state, then refresh those sinks below.
+    std::set<std::string> was_muted;
+    if (link.priority_hangtime_timer != nullptr)
+    {
+      link.priority_hangtime_timer->setEnable(false);
+    }
+    was_muted.swap(link.priority_active_sinks);
+
     updateConnections();
     checkTimeoutTimer(link);
+
+      // Recompute priority routing for the sinks whose hangtime we just
+      // cleared so any lingering mute gain is released.
+    for (const auto& sink_name : was_muted)
+    {
+      updatePriorityForSink(sink_name);
+    }
   }
 } /* LinkManager::deactivateLink */
 
@@ -1813,9 +1833,13 @@ bool LinkManager::isPriorityHangtimeActive(const std::string& sink_name)
     if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
     if (link.logic_props.count(sink_name) == 0) continue;
 
-      // Check if hangtime timer is enabled (running)
+      // Hangtime only mutes the sinks that were actually being preempted by a
+      // priority source when it unkeyed. A member whose only activity was its
+      // own local transmission is not in priority_active_sinks and so is not
+      // muted during hangtime.
     if (link.priority_hangtime_timer != nullptr &&
-        link.priority_hangtime_timer->isEnabled())
+        link.priority_hangtime_timer->isEnabled() &&
+        link.priority_active_sinks.count(sink_name) > 0)
     {
       return true;
     }
@@ -1835,27 +1859,39 @@ void LinkManager::checkPriorityHangtime(void)
     if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
     if (link.priority_hangtime_timer == nullptr) continue;
 
-      // Check if any source in this PRIORITY link has squelch open
-    bool priority_source_active = false;
-    for (const auto& prop : link.logic_props)
+      // Determine, per member acting as a sink, whether a priority source is
+      // currently transmitting INTO it. This mirrors isPrioritySourceActive:
+      // a member's own open squelch never counts as priority activity for
+      // itself (a sink has no amp for its own audio); it only counts as a
+      // priority source into the OTHER members of the link. Ordinary local
+      // traffic on a member therefore never arms hangtime muting of that
+      // member's own incoming audio.
+    std::set<std::string> active_sinks;
+    for (const auto& sink_prop : link.logic_props)
     {
-      const std::string& logic_name = prop.first;
-      LogicMap::iterator it = logic_map.find(logic_name);
-      if (it != logic_map.end() && it->second.squelch_open)
+      const std::string& sink_name = sink_prop.first;
+      for (const auto& src_prop : link.logic_props)
       {
-        priority_source_active = true;
-        break;
+        const std::string& src_name = src_prop.first;
+        if (src_name == sink_name) continue;
+        LogicMap::iterator it = logic_map.find(src_name);
+        if (it != logic_map.end() && it->second.squelch_open)
+        {
+          active_sinks.insert(sink_name);
+          break;
+        }
       }
     }
 
-    if (priority_source_active)
+    if (!active_sinks.empty())
     {
-        // Priority source is active - stop hangtime timer if running
-        // and mark that priority was active
+        // A priority source is transmitting into these sinks - stop any
+        // running hangtime timer and remember which sinks are being preempted
+        // so the hangtime (once the source unkeys) applies to exactly them.
       link.priority_hangtime_timer->setEnable(false);
-      link.priority_was_active = true;
+      link.priority_active_sinks = active_sinks;
     }
-    else if (link.priority_was_active)
+    else if (!link.priority_active_sinks.empty())
     {
         // Priority was active but is now inactive.
         // Start hangtime timer if it's not already running.
@@ -1872,12 +1908,14 @@ void LinkManager::checkPriorityHangtime(void)
 void LinkManager::onPriorityHangtimeExpired(Async::Timer *t, Link *link)
 {
   t->setEnable(false);
-  link->priority_was_active = false;
 
-    // Hangtime expired - update priority state for all sinks in this link
-  for (const auto& prop : link->logic_props)
+    // Hangtime expired - refresh the sinks that were being held muted, then
+    // forget them.
+  std::set<std::string> affected;
+  affected.swap(link->priority_active_sinks);
+  for (const auto& sink_name : affected)
   {
-    updatePriorityForSink(prop.first);
+    updatePriorityForSink(sink_name);
   }
 } /* LinkManager::onPriorityHangtimeExpired */
 

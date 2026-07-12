@@ -421,7 +421,7 @@ class LinkManager : public sigc::trackable
         : default_active(false), is_activated(false), timeout_timer(0),
           audio_mode(LinkAudioMode::FIRST), duck_level_db(-12.0f),
           priority_mute_db(-60.0f), priority_hangtime(0),
-          priority_hangtime_timer(0), priority_was_active(false) {}
+          priority_hangtime_timer(0) {}
       ~Link(void)
       {
         delete timeout_timer;
@@ -440,7 +440,12 @@ class LinkManager : public sigc::trackable
       float         priority_mute_db;
       int           priority_hangtime;        // Hangtime in ms (0 = disabled)
       Async::Timer  *priority_hangtime_timer; // Active during priority hangtime
-      bool          priority_was_active;      // Track if priority was active
+        // The sinks (members of this link) into which a priority source was
+        // transmitting when the source last unkeyed. The hangtime timer keeps
+        // exactly these sinks muted; a member's own local transmission does not
+        // add that member to the set, so it does not arm hangtime muting of its
+        // own incoming audio.
+      std::set<std::string> priority_active_sinks;
     };
     typedef std::map<std::string, Link> LinkMap;
     typedef std::set<std::pair<std::string, std::string> > LogicConSet;
