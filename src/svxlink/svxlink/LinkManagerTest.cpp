@@ -253,6 +253,31 @@ void test_duck_gain_reset_on_deactivate_reactivate(void)
   teardown(lg);
 }
 
+// A DUCK/PRIORITY link with a Reflector-type member logic can never actually
+// duck/preempt on that member's traffic, since ReflectorLogic/ReflectorV2Logic
+// never emit squelchStateChanged (only the Logic base class does). This must
+// only warn at initialize(), not crash or otherwise disrupt the link, which
+// keeps working normally (just never ducking on the Reflector member).
+void test_duck_warns_for_reflector_member_but_still_works(void)
+{
+  cout << "test_duck_warns_for_reflector_member_but_still_works" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+    // Set before buildLinks() so LinkManager::initialize() (called first,
+    // inside buildLinks) sees TYPE=Reflector; buildLinks then overwrites it
+    // to "Test" afterwards so the FakeLogic itself still initializes fine.
+  cfg.setValue("Logic1", "TYPE", string("Reflector"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "link still functions normally despite the Reflector-type warning");
+  teardown(lg);
+}
+
 // PRIORITY: a non-priority source is muted to PRIORITY_MUTE_DB while a
 // priority-link source transmits; the priority source stays at 0 dB.
 void test_priority_gain(void)
@@ -780,6 +805,7 @@ int main(void)
   test_delete_logic_no_crash();
   test_duck_gain();
   test_duck_gain_reset_on_deactivate_reactivate();
+  test_duck_warns_for_reflector_member_but_still_works();
   test_priority_gain();
   test_hub_traffic_no_hangtime_mute();
   test_priority_hangtime_reset_on_deactivate();
