@@ -183,6 +183,42 @@ void test_duck_gain(void)
   teardown(lg);
 }
 
+// A DUCK link deactivated while its sink's squelch is still open must not
+// leave the stale DUCK_LEVEL_DB gain behind: once the squelch later closes
+// (with the link no longer active, so updateDuckingForSink no longer touches
+// this connection) and the link is reactivated, the connection must come
+// back at 0 dB, not still ducked from before deactivation.
+void test_duck_gain_reset_on_deactivate_reactivate(void)
+{
+  cout << "test_duck_gain_reset_on_deactivate_reactivate" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("L", "DUCK_LEVEL_DB", string("-15"));
+  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[0]->squelchStateChanged(true);                  // Logic1 squelch opens
+  check(near_db(lm->linkGain("Logic2", "Logic1"), -15.0f),
+        "ducked to -15 dB while active and squelch open");
+
+    // Deactivate the link while the squelch is still open: no squelch event
+    // fires, so nothing tells updateDuckingForSink to restore the gain.
+  lm->deactivateLinkByName("L");
+
+    // Squelch closes with the link deactivated: the connection is no longer
+    // DUCK-mode (it isn't wanted at all), so updateDuckingForSink's mode
+    // check skips it and leaves whatever gain was last set.
+  lg[0]->squelchStateChanged(false);
+
+  lm->activateLinkByName("L");
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "reactivated connection is not still ducked from before deactivation");
+  teardown(lg);
+}
+
 // PRIORITY: a non-priority source is muted to PRIORITY_MUTE_DB while a
 // priority-link source transmits; the priority source stays at 0 dB.
 void test_priority_gain(void)
@@ -708,6 +744,7 @@ int main(void)
     // Synchronous tests (no timers needed)
   test_mix_opens_valves();
   test_duck_gain();
+  test_duck_gain_reset_on_deactivate_reactivate();
   test_priority_gain();
   test_hub_traffic_no_hangtime_mute();
   test_priority_hangtime_reset_on_deactivate();
