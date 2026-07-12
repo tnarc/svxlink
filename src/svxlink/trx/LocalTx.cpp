@@ -1036,7 +1036,10 @@ void LocalTx::updateCtcssPtt(void)
   if (ctcss_ptt != 0)
   {
       // The CTCSS encoder is keyed only while actually transmitting a tone.
-    ctcss_ptt->setTxOn(isTransmitting() && ctcss_enable);
+      // Mirror the same condition used for the main PTT line so the encode
+      // line drops together with the carrier on a TX timeout instead of
+      // staying keyed with no carrier present.
+    ctcss_ptt->setTxOn(isTransmitting() && !tx_timeout_occured && ctcss_enable);
   }
 } /* LocalTx::updateCtcssPtt */
 
@@ -1062,13 +1065,18 @@ void LocalTx::txTimeoutOccured(Timer *t)
   
   cerr << "*** ERROR: Transmitter " << name()
        << " have been active for too long. Turning it off...\n";
-  
+
   if (!setPtt(false))
   {
     perror("setPin");
   }
-  
+
   tx_timeout_occured = true;
+
+    // Drop the CTCSS encode line along with the PTT: without this it would
+    // stay keyed for the rest of the timeout period with no carrier present.
+  updateCtcssPtt();
+
   txTimeout();
 } /* LocalTx::txTimeoutOccured */
 
