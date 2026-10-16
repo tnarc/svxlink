@@ -1027,11 +1027,13 @@ void Logic::setOnline(bool online)
   if (online)
   {
     tx().setTxCtrlMode(currently_set_tx_ctrl_mode);
+    setMuteLinking(false);
   }
   else
   {
     tx().setTxCtrlMode(Tx::TX_OFF);
     deactivateModule(0);
+    setMuteLinking(true);
   }
   stringstream ss;
   ss << "logic_online ";
