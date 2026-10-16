@@ -348,10 +348,10 @@ class SslKeypair
       std::string pem;
       if (ret == 1)
       {
-        char buf[16384];
-        int len = BIO_read(mem, buf, sizeof(buf));
+        char* data = nullptr;
+        long len = BIO_get_mem_data(mem, &data);
         assert(len > 0);
-        pem = std::string(buf, len);
+        pem = std::string(data, len);
       }
       BIO_free(mem);
       return pem;
@@ -453,10 +453,10 @@ class SslKeypair
       std::string pem;
       if (ret == 1)
       {
-        char buf[16384];
-        int len = BIO_read(mem, buf, sizeof(buf));
+        char* data = nullptr;
+        long len = BIO_get_mem_data(mem, &data);
         assert(len > 0);
-        pem = std::string(buf, len);
+        pem = std::string(data, len);
       }
       BIO_free(mem);
       return pem;
