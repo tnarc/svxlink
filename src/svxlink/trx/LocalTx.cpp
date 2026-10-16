@@ -970,15 +970,16 @@ void LocalTx::transmit(bool do_transmit)
   {
     fsk_trailer_transmitted = false;
 
-    setIsTransmitting(true);
-
+      // Open the audio device before changing the transmit state, so that a
+      // failure leaves the transmitter (and its PTT) untouched.
     if (!audio_io->open(AudioIO::MODE_WR))
     {
       cerr << "*** ERROR: Could not open audio device for transmitter \""
            << name() << "\"\n";
-      setIsTransmitting(false);
       return;
     }
+
+    setIsTransmitting(true);
     
     if (ctcss_enable)
     {
