@@ -315,6 +315,34 @@ void test_announce_empty_dtmf_does_not_force_ctcss(void)
   teardown(lg);
 }
 
+// A PRIORITY source must only mute sources that are actually connected to
+// the sink. A source whose MIX link to that sink is inactive must keep its
+// gain untouched, so that it is at unity gain when the link is activated.
+void test_priority_does_not_touch_unconnected_mixer_source(void)
+{
+  cout << "test_priority_does_not_touch_unconnected_mixer_source" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Mix", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Mix", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Mix", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Mix", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[0]->squelchStateChanged(true);              // priority source keys up
+  check(near_db(lm->linkGain("Logic3", "Logic2"), 0.0f),
+        "the gain of a source on an inactive MIX link is not touched");
+  lm->activateLinkByName("Mix");
+  check(near_db(lm->linkGain("Logic3", "Logic2"), -30.0f),
+        "the source is muted once its MIX link is activated");
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
 // Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
 // Each remaining sink's mixer holds an amp sourced from the deleted logic
 // (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
@@ -1089,6 +1117,7 @@ int main(void)
   test_announce_broadcast_no_recursion();
   test_overlapping_links_different_modes();
   test_squelch_does_not_crossconnect();
+  test_priority_does_not_touch_unconnected_mixer_source();
   test_overlapping_first_and_mix();
   test_overlapping_activation_reconciles_mode();
   test_bad_audio_mode_falls_back();
