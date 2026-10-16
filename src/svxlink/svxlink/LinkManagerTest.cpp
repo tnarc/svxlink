@@ -294,6 +294,27 @@ void test_muted_priority_source_does_not_preempt(void)
   teardown(lg);
 }
 
+// Mirroring an empty DTMF string to all logics must not raise the targets'
+// forced CTCSS flag, since nothing is played that would clear it again.
+void test_announce_empty_dtmf_does_not_force_ctcss(void)
+{
+  cout << "test_announce_empty_dtmf_does_not_force_ctcss" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "L", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[0]->setForceCtcss(true);
+  lm->playDtmfAll(lg[0], "", 500, 100);
+  check(!lg[1]->forceCtcss() && !lg[2]->forceCtcss(),
+        "an empty DTMF mirror does not raise forced CTCSS on the targets");
+  lm->playDtmfAll(lg[0], "1", 500, 100);
+  check(lg[1]->forceCtcss() && lg[2]->forceCtcss(),
+        "a non-empty DTMF mirror still raises forced CTCSS on the targets");
+  teardown(lg);
+}
+
 // Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
 // Each remaining sink's mixer holds an amp sourced from the deleted logic
 // (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
@@ -1064,6 +1085,7 @@ int main(void)
   test_announce_all_exclude();
   test_announce_scheduled_propagation();
   test_announce_force_ctcss_propagation();
+  test_announce_empty_dtmf_does_not_force_ctcss();
   test_announce_broadcast_no_recursion();
   test_overlapping_links_different_modes();
   test_squelch_does_not_crossconnect();

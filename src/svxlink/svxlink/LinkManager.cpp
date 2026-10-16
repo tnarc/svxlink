@@ -1025,6 +1025,13 @@ void LinkManager::playToneAll(LogicBase *src_logic, int fq, int amp, int len)
 void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
                               int amp, int len)
 {
+    // Nothing to play. Mirroring it anyway would raise the targets' forced
+    // CTCSS flag without queueing anything whose completion clears it again.
+  if (digits.empty())
+  {
+    return;
+  }
+
   const bool sched = src_logic->scheduledAnnouncement();
   const bool force = src_logic->forceCtcss();
   for (LogicMap::const_iterator it = logic_map.begin();
