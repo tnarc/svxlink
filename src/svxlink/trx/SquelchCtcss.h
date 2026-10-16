@@ -475,6 +475,9 @@ class SquelchCtcss : public Squelch
             // squelch. Only one active detector was tracked, so when it
             // dropped the squelch closed even though a second valid tone was
             // still active. (det itself just deactivated, so it is skipped.)
+            // Only the squelch info is updated to name the new tone; no new
+            // toneDetected signal is emitted, so the tone that opened the
+            // squelch stays the identity of the transmission.
           for (const auto& d : m_dets)
           {
             if (d->isActivated())
@@ -484,7 +487,7 @@ class SquelchCtcss : public Squelch
               ss << std::setprecision(1) << std::fixed << d->toneFq()
                  << ":" << static_cast<int>(std::roundf(
                        d->lastSnr() - m_ctcss_snr_offsets[d->toneFq()]));
-              setSignalDetected(true, ss.str());
+              updateSignalDetectedInfo(ss.str());
               return;
             }
           }
