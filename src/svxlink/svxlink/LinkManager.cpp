@@ -122,53 +122,6 @@ namespace
  ****************************************************************************/
 
 
-
-/****************************************************************************
- *
- * Local functions
- *
- ****************************************************************************/
-
-/**
- * @brief   Compile and cache an ACTIVATE_ON_TG regex pattern
- * @param   link_name The name of the link that the pattern belongs to
- * @param   logic_name The name of the logic that the pattern belongs to
- * @param   pattern The regex pattern, as read from the configuration
- * @return  Return a pointer to the compiled regex or 0 if the pattern is
- *          invalid
- *
- * The regex patterns configured through ACTIVATE_ON_TG are compiled once
- * and cached here, keyed on link and logic name, instead of being rebuilt
- * on every received TG update event. This also means that an invalid
- * pattern is only ever reported and handled once instead of throwing
- * std::regex_error out of the receivedTgUpdated signal handler.
- */
-const std::regex *cachedTgRegex(const std::string &link_name,
-                                 const std::string &logic_name,
-                                 const std::string &pattern)
-{
-  static std::map<std::pair<std::string, std::string>, std::regex> cache;
-  auto key = std::make_pair(link_name, logic_name);
-  auto it = cache.find(key);
-  if (it != cache.end())
-  {
-    return &it->second;
-  }
-  try
-  {
-    auto res = cache.emplace(key, std::regex(pattern));
-    return &res.first->second;
-  }
-  catch (const std::regex_error &e)
-  {
-    cerr << "*** ERROR: Invalid ACTIVATE_ON_TG pattern \"" << pattern
-         << "\" for logic \"" << logic_name << "\" in link \"" << link_name
-         << "\": " << e.what() << endl;
-    return 0;
-  }
-} /* cachedTgRegex */
-
-
 } // End of anonymous namespace
 
 /****************************************************************************
@@ -305,11 +258,21 @@ bool LinkManager::initialize(Async::Config &cfg,
 
         // Validate and precompile the ACTIVATE_ON_TG regex patterns here so
         // that an invalid pattern is caught at configuration time instead of
-        // crashing the application when the first TG update event arrives.
+        // crashing the application when the first TG update event arrives,
+        // and so that the pattern is not recompiled on every TG update.
       for (const auto &item : link.auto_activate_on_tg)
       {
-        if (cachedTgRegex(link.name, item.first, item.second) == 0)
+        try
         {
+          link.auto_activate_on_tg_regex.emplace(item.first,
+                                                 std::regex(item.second));
+        }
+        catch (const std::regex_error &e)
+        {
+          std::cerr << "*** ERROR: Invalid ACTIVATE_ON_TG pattern \""
+                    << item.second << "\" for logic \"" << item.first
+                    << "\" in link \"" << link.name << "\": " << e.what()
+                    << std::endl;
           init_ok = false;
         }
       }
@@ -1602,13 +1565,11 @@ void LinkManager::onReceivedTgUpdated(LogicBase *src_logic, uint32_t tg)
 #if 1
     std::ostringstream tgss;
     tgss << tg;
-    auto aait = link.auto_activate_on_tg.find(src_logic->name());
-    const std::regex *tg_regex =
-        (!link.is_activated && aait != link.auto_activate_on_tg.end())
-        ? cachedTgRegex(link.name, aait->first, aait->second) : 0;
-    if (tg_regex != 0 &&
+    auto aait = link.auto_activate_on_tg_regex.find(src_logic->name());
+    if (!link.is_activated &&
         //(link.logic_props.find( != link.logic_props.end()) &&
-        std::regex_match(tgss.str(), *tg_regex))
+        aait != link.auto_activate_on_tg_regex.end() &&
+        std::regex_match(tgss.str(), aait->second))
     {
       std::ostringstream ss;
       ss << "ACTIVATE_ON_TG from logic '"
