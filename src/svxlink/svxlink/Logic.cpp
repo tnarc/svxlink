@@ -386,8 +386,10 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
     size_t comma = sel5_macros.find(",");
     if (comma == string::npos)
     {
-      cerr << "*** ERROR: Bad format for config variable SEL5_MACRO_RANGE. "
-           << "Valid format for value is from,to.\n";
+        // A single value is a range with just that one sequence in it
+      sel5_from = sel5_to = sel5_macros;
+      cout << "Sel5 macro range is the single sequence " << sel5_from
+           << endl;
     }
     else
     {
