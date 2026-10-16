@@ -328,12 +328,17 @@ void NetUplink::clientConnected(TcpConnection *incoming_con)
     case STATE_DISC:
       handleIncomingConnection(incoming_con);
       break;
+    case STATE_DISC_CLEANUP:
+        // The previous client has disconnected but the deferred cleanup
+        // has not run yet. Run it now instead of rejecting the new client,
+        // which would otherwise have to wait for its next reconnect attempt.
+      disconnectCleanup();
+      handleIncomingConnection(incoming_con);
+      break;
     case STATE_CON_SETUP:
     case STATE_READY:
       std::cout << name << ": Only one client allowed. Disconnecting..."
                 << std::endl;
-      // Fall through
-    case STATE_DISC_CLEANUP:
       incoming_con->disconnect();
       break;
   }
@@ -342,6 +347,13 @@ void NetUplink::clientConnected(TcpConnection *incoming_con)
 
 void NetUplink::disconnectCleanup(void)
 {
+    // The cleanup is deferred after a disconnect, but may also have been run
+    // already when a new client connected in the meantime
+  if (state != STATE_DISC_CLEANUP)
+  {
+    return;
+  }
+
   con = 0;
   recv_exp = 0;
   setState(STATE_DISC);
@@ -385,6 +397,7 @@ void NetUplink::clientDisconnected(TcpConnection *the_con,
             << std::endl;
 
   con = 0;
+  heartbeat_timer->setEnable(false);
   setState(STATE_DISC_CLEANUP);
   Application::app().runTask(mem_fun(*this, &NetUplink::disconnectCleanup));
 } /* NetUplink::clientDisconnected */
@@ -591,7 +604,19 @@ void NetUplink::handleMsg(Msg *msg)
     case MsgSendDtmf::TYPE:
     {
       MsgSendDtmf *dtmf_msg = reinterpret_cast<MsgSendDtmf *>(msg);
-      tx->sendDtmf(dtmf_msg->digits(), dtmf_msg->duration());
+        // The duration comes from the remote end. Zero means the default
+        // duration. Limit it so that a digit cannot key the transmitter for
+        // a very long time.
+      const unsigned MAX_DTMF_DURATION = 2000;
+      unsigned duration = dtmf_msg->duration();
+      if (duration > MAX_DTMF_DURATION)
+      {
+        std::cerr << "*** WARNING[" << name << "]: Limiting DTMF duration "
+                  << duration << " ms to " << MAX_DTMF_DURATION << " ms"
+                  << std::endl;
+        duration = MAX_DTMF_DURATION;
+      }
+      tx->sendDtmf(dtmf_msg->digits(), duration);
       break;
     }
     
@@ -833,6 +858,13 @@ void NetUplink::allEncodedSamplesFlushed(void)
 
 void NetUplink::heartbeat(Timer *t)
 {
+    // The timer may still fire after the client disconnected, before the
+    // deferred cleanup has run
+  if ((state != STATE_CON_SETUP) && (state != STATE_READY))
+  {
+    return;
+  }
+
   sendMsg(MsgHeartbeat());
 
   struct timeval diff_tv;
@@ -896,6 +928,10 @@ void NetUplink::signalLevelUpdated(float siglev)
 
 void NetUplink::forceDisconnect(void)
 {
+  if (con == 0)
+  {
+    return;
+  }
   con->disconnect();
   clientDisconnected(con, TcpConnection::DR_ORDERED_DISCONNECT);
 } /* NetUplink::forceDisconnect */
