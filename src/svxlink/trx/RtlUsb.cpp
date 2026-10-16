@@ -617,7 +617,19 @@ void RtlUsb::rtlsdrCallback(unsigned char *buf, uint32_t len, void *ctx)
   if (!rtl->sample_buf->addSamples(buf, len))
   {
     cerr << "*** WARNING: Write error while writing to the RTL sample buffer\n";
-    rtl->verboseClose();
+      // NOTE: This callback runs on the RTL reader thread (it is invoked by
+      // rtlsdr_read_async, which we called from rtlReader() on that thread).
+      // We must NOT call verboseClose() here: it would try to pthread_join()
+      // the reader thread from within the reader thread itself (self-join,
+      // EDEADLK) and then go on to delete sample_buf and close the device
+      // while this very thread is still running -> use-after-free.
+      //
+      // Instead just cancel the async read. That makes rtlReader() return and
+      // call sample_buf->closeWritePipe(), which the main Async thread detects
+      // as EOF on the self-pipe FdWatch and turns into a writePipeClosed()
+      // signal. That signal is connected to verboseClose(), so the actual
+      // teardown (join + delete + close) happens safely on the main thread.
+    rtlsdr_cancel_async(rtl->dev);
   }
 } /* RtlUsb::rtlsdrCallback */
 #endif
