@@ -144,9 +144,45 @@ def test_scheduled_announcement_does_not_key_ctcss_encode_line():
         h.cleanup()
 
 
+def test_tx_timeout_releases_ctcss_encode_line():
+    """When the transmitter timeout (TIMEOUT) forces the PTT off in the middle
+    of a transmission, the CTCSS encode-enable output line (CTCSS_PTT) must be
+    released too, not stay keyed until the transmission ends."""
+    import math
+    h = SvxlinkHarness(num_logics=2, logic_opts={"TX_CTCSS": "ANNOUNCEMENT"})
+    pty = os.path.join(h.tmp, "ctcss_enc1")
+    h.per_tx_opts = {"Logic1": {"CTCSS_PTT": "CtcssEnc1", "TIMEOUT": "1"}}
+    h.extra_sections = {"CtcssEnc1": ["PTT_TYPE=PTY", f"PTT_PTY={pty}"]}
+    h.setup()
+      # A 4 s announcement, much longer than the 1 s transmitter timeout
+    n = 4 * SAMPLE_RATE
+    h.add_sound_clip("en_US", "Core", "unknown_command",
+                     [int(8000 * math.sin(2 * math.pi * 600 * i / SAMPLE_RATE))
+                      for i in range(n)])
+    h.start()
+    try:
+        fd = os.open(pty, os.O_RDONLY | os.O_NONBLOCK)
+        _drain_fd(fd)             # discard initial/startup line state
+        h.send_dtmf("Logic1", CMD)
+          # Well past the timeout, while the announcement is still playing
+        time.sleep(2.5)
+        line = _drain_fd(fd)
+        os.close(fd)
+        _assert(b"T" in line,
+                f"the announcement should key the CTCSS encode line, "
+                f"got {line!r}")
+        keyed = line.rstrip(b"\r\n")
+        _assert(keyed.endswith(b"R"),
+                f"the CTCSS encode line must be released when the TX timeout "
+                f"forces the PTT off, got {line!r}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_scheduled_announcement_suppresses_ctcss,
     test_scheduled_announcement_does_not_key_ctcss_encode_line,
+    test_tx_timeout_releases_ctcss_encode_line,
 ]
 
 
