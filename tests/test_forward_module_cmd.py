@@ -19,7 +19,11 @@ The tests assert:
   * a second band port dialling the id while the module is in use gets a
     "busy" response (command_failed announcement) and does NOT re-activate;
   * deactivating from the owning port frees the module for every port (the
-    target publishes ModuleFwd:state ... 0 and a second port can then take it).
+    target publishes ModuleFwd:state ... 0 and a second port can then take it);
+  * a forwarding session is not left open when the target does not activate
+    the module (e.g. another module is already active there), or when the
+    link to the target is dropped in the middle of a session, so the band
+    port never gets stuck forwarding all its DTMF to the target.
 
 Run directly:  python3 tests/test_forward_module_cmd.py   (exit 0 = pass)
 """
@@ -32,12 +36,20 @@ import traceback
 from harness import SvxlinkHarness, LinkSpec, REPO
 
 MODULE_ID = "1"          # ModuleParrot's default ID
+HELP_ID = "0"            # ModuleHelp's default ID
 TARGET = "Logic3"        # the logic that actually hosts the module
 
 
 def _assert(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def _module_tcl(module_dir, name):
+    path = os.path.join(REPO, "src", "svxlink", "modules", module_dir,
+                        f"{name}.tcl")
+    with open(path) as f:
+        return f.read()
 
 
 def _parrot_tcl():
@@ -51,9 +63,21 @@ def _parrot_tcl():
         return f.read()
 
 
-def _make_harness():
+def _make_harness(with_help=False):
     """Three Simplex logics in one default-active link. Logic3 hosts
-    ModuleParrot; Logic1 and Logic2 are band ports that forward id 1 to it."""
+    ModuleParrot; Logic1 and Logic2 are band ports that forward id 1 to it.
+    With with_help, Logic3 also hosts ModuleHelp (id 0), which is not
+    forwarded and can be activated locally on Logic3 to keep it busy."""
+    extra = {
+        "ModuleParrot": ["NAME=Parrot", f"ID={MODULE_ID}", "TIMEOUT=60",
+                         "FIFO_LEN=60", "REPEAT_DELAY=0"],
+    }
+    tcl = {"Parrot.tcl": _parrot_tcl()}
+    modules = "ModuleParrot"
+    if with_help:
+        extra["ModuleHelp"] = ["NAME=Help", f"ID={HELP_ID}", "TIMEOUT=60"]
+        tcl["Help.tcl"] = _module_tcl("help", "Help")
+        modules = "ModuleHelp,ModuleParrot"
     h = SvxlinkHarness(
         num_logics=3,
         logic_type="Simplex",
@@ -62,18 +86,15 @@ def _make_harness():
         per_logic_opts={
             "Logic1": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:{TARGET}"},
             "Logic2": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:{TARGET}"},
-            "Logic3": {"MODULES": "ModuleParrot"},
+            "Logic3": {"MODULES": modules},
         },
         # Modules are loaded from MODULE_PATH; point it at the build tree.
         global_opts={"MODULE_PATH": os.path.join(REPO, "build", "lib")},
         # ModuleParrot config section (referenced by MODULES=ModuleParrot).
-        extra_sections={
-            "ModuleParrot": ["NAME=Parrot", f"ID={MODULE_ID}", "TIMEOUT=60",
-                             "FIFO_LEN=60", "REPEAT_DELAY=0"],
-        },
+        extra_sections=extra,
         # The module's own event script is not part of the core TCL tree the
         # harness symlinks, so provide it as a local override.
-        local_event_tcl={"Parrot.tcl": _parrot_tcl()},
+        local_event_tcl=tcl,
     )
     h.setup()
     # Sound clips so the module/announcements actually key the transmitter.
@@ -179,10 +200,67 @@ def test_deactivate_frees_for_all():
         h.cleanup()
 
 
+def _wait_log(h, text, timeout=5.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if text in h.read_log():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_session_not_left_open_when_target_busy():
+    """If the target does not activate the forwarded module because another
+    module is already active there, the band port must not be left in a
+    forwarding session."""
+    h = _make_harness(with_help=True)
+    try:
+        # Keep the target busy with a module of its own
+        h.count_tx_after(lambda: h.send_dtmf(TARGET, HELP_ID + "#"),
+                         window=2.0)
+        _assert(_wait_log(h, f"{TARGET}: Activating module Help"),
+                "the Help module should be active on the target")
+
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
+                         window=2.5)
+        _assert(_wait_log(h, "Logic1: Ending forwarding session to " + TARGET),
+                "Logic1 must not stay in a forwarding session when the target "
+                "did not activate the module")
+    finally:
+        h.cleanup()
+
+
+def test_session_ends_when_link_dropped():
+    """If the link between the band port and the target is dropped during a
+    forwarding session, the band port must leave forwarding mode and process
+    its DTMF locally again."""
+    h = _make_harness()
+    try:
+        h.read_state(TARGET)
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
+                         window=2.5)
+        _assert(_module_active(h) is True, "module should be active after L1")
+
+        # Another port drops the link
+        h.count_tx_after(lambda: h.send_dtmf("Logic2", "91#"), window=1.5)
+        _assert(_wait_log(h, "Deactivating link Bridge"),
+                "the link should have been deactivated")
+
+        # The next digits on Logic1 must not be forwarded any more
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", "5#"), window=1.5)
+        _assert(_wait_log(h, "Logic1: Ending forwarding session to " + TARGET),
+                "Logic1 must leave forwarding mode once it is no longer "
+                "linked to the target")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_forward_activates_module_on_target,
     test_second_port_gets_busy,
     test_deactivate_frees_for_all,
+    test_session_not_left_open_when_target_busy,
+    test_session_ends_when_link_dropped,
 ]
 
 

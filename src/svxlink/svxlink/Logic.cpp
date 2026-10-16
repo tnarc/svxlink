@@ -1104,19 +1104,23 @@ void Logic::dtmfDigitDetected(char digit, int duration)
     LogicBase *base = LinkManager::hasInstance()
         ? LinkManager::instance()->findLogic(m_fwd_active_target) : 0;
     Logic *target = dynamic_cast<Logic*>(base);
-    if (target != 0)
+      // Only keep forwarding while the session is still valid: the target
+      // still exists, is still linked to this logic and is still running the
+      // forwarded module (or has the activation command still pending).
+      // Otherwise end the session and handle the digit locally, so that this
+      // port can never get stuck in forwarding mode.
+    if ((target != 0) &&
+        LinkManager::instance()->logicsAreLinked(name(), m_fwd_active_target) &&
+        target->forwardedModuleActiveOrPending(m_fwd_active_cmd_id))
     {
         // Mark the target so a forwarded inject can never be re-forwarded
         // (loop guard), then deliver the digit to its own command path.
       target->m_in_forwarded_inject = true;
       target->injectDtmfDigit(digit, duration);
       target->m_in_forwarded_inject = false;
+      return;
     }
-    else
-    {
-      endForwardingSession();
-    }
-    return;
+    endForwardingSession();
   }
 
   if (active_module != 0)
@@ -1193,6 +1197,7 @@ void Logic::setOnline(bool online)
   {
     tx().setTxCtrlMode(Tx::TX_OFF);
     deactivateModule(0);
+    endForwardingSession();
     setMuteLinking(true);
   }
   stringstream ss;
@@ -1326,7 +1331,30 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     target->injectDtmfDigit(to_inject[i], 100);
     target->m_in_forwarded_inject = false;
   }
+
+    // The target may have refused to activate the module, e.g. because
+    // another module is already active there. Then there is no session to
+    // forward to.
+  if (!target->forwardedModuleActiveOrPending(cmd_id))
+  {
+    std::cout << name() << ": Module command " << cmd_id << " was not "
+              << "activated on " << target_logic << std::endl;
+    endForwardingSession();
+    processEvent("command_failed " + cmd_id);
+  }
 } /* Logic::forwardModuleCmd */
+
+
+bool Logic::forwardedModuleActiveOrPending(const std::string& cmd_id) const
+{
+  if (!cmd_queue.empty())
+  {
+      // Command processing is held back (e.g. while the squelch is open), so
+      // the activation command may not have been processed yet
+    return true;
+  }
+  return (active_module != 0) && (std::to_string(active_module->id()) == cmd_id);
+} /* Logic::forwardedModuleActiveOrPending */
 
 
 /****************************************************************************

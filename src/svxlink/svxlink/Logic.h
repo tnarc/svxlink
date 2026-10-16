@@ -391,6 +391,7 @@ class Logic : public LogicBase
     void detectedTone(float fq);
     void publishModuleState(Module *module, bool active);
     void endForwardingSession(void);
+    bool forwardedModuleActiveOrPending(const std::string& cmd_id) const;
     void cfgUpdated(const std::string& section, const std::string& tag);
     bool getConfigValue(const std::string& section, const std::string& tag,
                         std::string& value);
