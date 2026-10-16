@@ -1864,9 +1864,9 @@ void ModuleEchoLink::dbcTimeout(Timer *t)
 } /* ModuleEchoLink::dbcTimeout  */
 
 
-int ModuleEchoLink::numConnectedStations(void)
+unsigned ModuleEchoLink::numConnectedStations(void)
 {
-  int cnt = 0;
+  unsigned cnt = 0;
   vector<QsoImpl*>::iterator it;
   for (it=qsos.begin(); it!=qsos.end(); ++it)
   {
