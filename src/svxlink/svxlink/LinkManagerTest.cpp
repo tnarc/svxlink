@@ -343,6 +343,31 @@ void test_priority_does_not_touch_unconnected_mixer_source(void)
   teardown(lg);
 }
 
+// An invalid ACTIVATE_ON_TG pattern must be reported when the configuration
+// is read, also when the link manager is initialized again with a changed
+// pattern (the compiled patterns must not outlive the link manager).
+void test_activate_on_tg_pattern_validated_on_every_init(void)
+{
+  cout << "test_activate_on_tg_pattern_validated_on_every_init" << endl;
+  Config cfg;
+  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("L", "TIMEOUT", string("10"));
+
+  cfg.setValue("L", "ACTIVATE_ON_TG", string("Logic1:240.*"));
+  check(LinkManager::initialize(cfg, "L"),
+        "a valid ACTIVATE_ON_TG pattern is accepted");
+  LinkManager::deleteInstance();
+
+  cfg.setValue("L", "ACTIVATE_ON_TG", string("Logic1:[24"));
+  bool init_ok = LinkManager::initialize(cfg, "L");
+  check(!init_ok,
+        "an invalid pattern is rejected after a re-initialization");
+  if (LinkManager::hasInstance())
+  {
+    LinkManager::deleteInstance();
+  }
+}
+
 // Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
 // Each remaining sink's mixer holds an amp sourced from the deleted logic
 // (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
@@ -1105,6 +1130,7 @@ int main(void)
 
     // Synchronous tests (no timers needed)
   test_mix_opens_valves();
+  test_activate_on_tg_pattern_validated_on_every_init();
   test_events_reach_linked_logics_in_all_modes();
   test_delete_logic_no_crash();
   test_duck_gain();
