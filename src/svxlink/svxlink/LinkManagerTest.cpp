@@ -30,6 +30,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <AsyncAudioPassthrough.h>
 
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <string>
 
@@ -737,6 +738,9 @@ void test_no_audio_mode_is_first(void)
 class HangtimeTest : public sigc::trackable
 {
   public:
+      // Called when the test is done, instead of quitting the application
+    std::function<void()> on_done;
+
     void run(void)
     {
       cout << "test_priority_hangtime" << endl;
@@ -789,7 +793,103 @@ class HangtimeTest : public sigc::trackable
       delete m_mid;
       delete m_post;
       teardown(m_lg);
-      Application::app().quit();
+      if (on_done)
+      {
+        Application::app().runTask(on_done);
+      }
+      else
+      {
+        Application::app().quit();
+      }
+    }
+};
+
+// A FIRST source that is cut off from the mixer in the middle of a stream
+// (because the last MIX connection into the sink went away) must not leave
+// the mixer waiting for it forever. Otherwise, when a MIX connection comes
+// back, the mixer never outputs anything and MIX audio into that sink stalls.
+class MixStallTest : public sigc::trackable
+{
+  public:
+    void run(void)
+    {
+      cout << "test_mix_not_stalled_after_selector_feed_detach" << endl;
+      m_cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+      m_cfg.setValue("A", "AUDIO_MODE", string("FIRST"));
+      m_cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+      m_cfg.setValue("B", "CONNECT_LOGICS", string("Logic1,Logic3"));
+      m_cfg.setValue("B", "AUDIO_MODE", string("MIX"));
+      m_cfg.setValue("B", "DEFAULT_ACTIVE", string("1"));
+      buildLinks(m_cfg, "A,B", m_lg);
+      dynamic_cast<AudioPassthrough*>(m_lg[0]->logicConIn())
+        ->registerSink(&m_sink);
+      m_timer.expired.connect(sigc::hide(
+          sigc::mem_fun(*this, &MixStallTest::step)));
+    }
+
+  private:
+    class CountSink : public AudioSink
+    {
+      public:
+        int total = 0;
+        int writeSamples(const float*, int count) override
+        {
+          total += count;
+          return count;
+        }
+        void flushSamples(void) override { sourceAllSamplesFlushed(); }
+    };
+
+    Config      m_cfg;
+    FakeLogic*  m_lg[3];
+    CountSink   m_sink;
+    Timer       m_timer {20, Timer::TYPE_PERIODIC};
+    float       m_buf[160] = {0};
+    int         m_phase = 0;
+    int         m_before = 0;
+
+    void write(int logic_idx, int blocks)
+    {
+      auto src = dynamic_cast<AudioPassthrough*>(m_lg[logic_idx]->logicConOut());
+      for (int i = 0; i < blocks; ++i)
+      {
+        src->writeSamples(m_buf, 160);
+      }
+    }
+
+    void step(void)
+    {
+      LinkManager* lm = LinkManager::instance();
+      switch (m_phase++)
+      {
+        case 0:
+            // FIRST source Logic2 streams into Logic1 through the mixer
+          write(1, 5);
+          break;
+        case 1:
+            // The MIX link goes away while Logic2 is still streaming, so the
+            // selector is moved from the mixer straight to Logic1
+          lm->deactivateLinkByName("B");
+          write(1, 2);
+          dynamic_cast<AudioPassthrough*>(m_lg[1]->logicConOut())
+            ->flushSamples();
+          break;
+        case 2:
+            // The MIX link comes back and the MIX source Logic3 streams
+          lm->activateLinkByName("B");
+          m_before = m_sink.total;
+          write(2, 10);
+          break;
+        case 3:
+          check(m_sink.total > m_before,
+                "MIX audio reaches the sink after the MIX link is "
+                "reactivated");
+          dynamic_cast<AudioPassthrough*>(m_lg[0]->logicConIn())
+            ->unregisterSink();
+          teardown(m_lg);
+          Application::app().quit();
+          break;
+      }
     }
 };
 
@@ -821,7 +921,10 @@ int main(void)
   test_no_audio_mode_is_first();
 
     // Event-loop test for hangtime; quits the app when done
+    // Event-loop tests, run one after the other. The last one quits the app.
   HangtimeTest hangtime;
+  MixStallTest mix_stall;
+  hangtime.on_done = [&mix_stall]() { mix_stall.run(); };
   hangtime.run();
   app.exec();
 
