@@ -159,6 +159,37 @@ void test_mix_opens_valves(void)
   teardown(lg);
 }
 
+// Announcements and other events from a logic must reach the logics it is
+// connected to whatever the audio mode of the link, not only over FIRST-mode
+// links, and must stop when the link is deactivated.
+void test_events_reach_linked_logics_in_all_modes(void)
+{
+  cout << "test_events_reach_linked_logics_in_all_modes" << endl;
+  const char* modes[] = {"FIRST", "MIX", "DUCK", "PRIORITY"};
+  for (const char* mode : modes)
+  {
+    Config cfg;
+    cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+    cfg.setValue("L", "AUDIO_MODE", string(mode));
+    cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+    FakeLogic* lg[3];
+    buildLinks(cfg, "L", lg);
+    LinkManager* lm = LinkManager::instance();
+
+    lm->playFile(lg[0], "test.wav");
+    check((lg[0]->files_played == 0) && (lg[1]->files_played == 1) &&
+          (lg[2]->files_played == 1),
+          string(mode) + ": playFile reaches the linked logics only");
+
+    lm->deactivateLinkByName("L");
+    lm->playFile(lg[0], "test.wav");
+    check((lg[1]->files_played == 1) && (lg[2]->files_played == 1),
+          string(mode) + ": playFile does not reach logics after the link "
+                         "is deactivated");
+    teardown(lg);
+  }
+}
+
 // Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
 // Each remaining sink's mixer holds an amp sourced from the deleted logic
 // (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
@@ -902,6 +933,7 @@ int main(void)
 
     // Synchronous tests (no timers needed)
   test_mix_opens_valves();
+  test_events_reach_linked_logics_in_all_modes();
   test_delete_logic_no_crash();
   test_duck_gain();
   test_duck_gain_reset_on_deactivate_reactivate();

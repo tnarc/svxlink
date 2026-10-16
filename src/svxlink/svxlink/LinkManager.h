@@ -522,6 +522,8 @@ class LinkManager : public sigc::trackable
     std::vector<std::string> getLinkNames(const std::string& logicname);
     void wantedConnections(LogicConSet &want);
     void updateConnections(void);
+    bool logicsConnected(const std::string& logic_name1,
+                         const std::string& logic_name2) const;
     void activateLink(Link &link, const std::string& reason="");
     void deactivateLink(Link &link, const std::string& reason="");
     void sendCmdToLogics(Link &link, LogicBase *src_logic,
