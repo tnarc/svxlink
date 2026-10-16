@@ -254,7 +254,9 @@ class RtlUsb::SampleBuffer : public sigc::trackable
           // writePipeClosed (which may end up deleting this SampleBuffer)
           // must not be done here since we are currently executing inside
           // the FdWatch activity callback for this very object. Defer the
-          // cleanup to run after we have returned from the callback.
+          // cleanup to run after we have returned from the callback. Stop
+          // watching the pipe meanwhile, so that EOF is only handled once.
+        watch->setEnabled(false);
         Application::app().runTask(
             mem_fun(*this, &SampleBuffer::handleWritePipeClosed));
         return;
