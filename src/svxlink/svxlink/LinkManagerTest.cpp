@@ -190,6 +190,99 @@ void test_events_reach_linked_logics_in_all_modes(void)
   }
 }
 
+// A FIRST-mode source preempted by an active PRIORITY source must stay
+// preempted when an unrelated link is activated or deactivated, even though
+// that does not change the connections into the preempted sink.
+void test_priority_preemption_survives_unrelated_link_change(void)
+{
+  cout << "test_priority_preemption_survives_unrelated_link_change" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("E", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("E", "AUDIO_MODE", string("FIRST"));
+  cfg.setValue("E", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm,E", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "FIRST source enabled before priority");
+  lg[0]->squelchStateChanged(true);
+  check(!lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "FIRST source preempted while priority active");
+  lm->activateLinkByName("E");
+  check(!lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "preemption survives unrelated link activation");
+  lm->deactivateLinkByName("E");
+  check(!lm->linkSelectorEnabled("Logic2", "Logic3"),
+        "preemption survives unrelated link deactivation");
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// A PRIORITY link activated while its source is already transmitting must
+// mute the other sources at once and give them the hangtime when the
+// priority source unkeys, just as if the source had keyed after activation.
+void test_priority_hangtime_after_activation_while_keyed(void)
+{
+  cout << "test_priority_hangtime_after_activation_while_keyed" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("0"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[0]->squelchStateChanged(true);              // priority source keys up
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "no muting while the PRIORITY link is inactive");
+  lm->activateLinkByName("Pri");
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "muted as soon as the PRIORITY link is activated");
+  lg[0]->squelchStateChanged(false);             // priority source unkeys
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "still muted during the hangtime after the priority source unkeys");
+  teardown(lg);
+}
+
+// A priority source that is muted in the logic linking layer (e.g. because
+// a module is active) does not pass any audio, so it must not preempt the
+// other sources either.
+void test_muted_priority_source_does_not_preempt(void)
+{
+  cout << "test_muted_priority_source_does_not_preempt" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[0]->setMuteLinking(true);
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "a muted priority source does not mute the other sources");
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
 // Deleting a logic must not corrupt (or crash) a surviving sink's mixer.
 // Each remaining sink's mixer holds an amp sourced from the deleted logic
 // (added in addLogic via mixer->addSource(amp)); that amp is destroyed here
@@ -939,6 +1032,9 @@ int main(void)
   test_duck_gain_reset_on_deactivate_reactivate();
   test_duck_warns_for_reflector_member_but_still_works();
   test_priority_gain();
+  test_priority_preemption_survives_unrelated_link_change();
+  test_priority_hangtime_after_activation_while_keyed();
+  test_muted_priority_source_does_not_preempt();
   test_hub_traffic_no_hangtime_mute();
   test_priority_hangtime_reset_on_deactivate();
   test_announce_all_exclude();
