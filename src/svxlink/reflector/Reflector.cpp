@@ -532,7 +532,13 @@ bool Reflector::sendUdpDatagram(ReflectorClient *client,
     }
 
     m_udp_sock->setCipherIV(client->udpCipherIV());
-    m_udp_sock->setCipherKey(client->udpCipherKey());
+    if (!m_udp_sock->setCipherKey(client->udpCipherKey()))
+    {
+      std::cout << "*** WARNING: Invalid UDP cipher key for "
+                << client->callsign() << ", not sending UDP datagram to "
+                << udp_addr << ":" << udp_port << std::endl;
+      return false;
+    }
     UdpCipher::AAD aad{client->udpCipherIVCntrNext()};
     std::stringstream aadss;
     if (!aad.pack(aadss))
@@ -1065,7 +1071,13 @@ bool Reflector::udpCipherDataReceived(const IpAddress& addr, uint16_t port,
     }
     m_udp_sock->setCipherIV(UdpCipher::IV{client->udpCipherIVRand(),
                                           client->clientId(), 0});
-    m_udp_sock->setCipherKey(client->udpCipherKey());
+    if (!m_udp_sock->setCipherKey(client->udpCipherKey()))
+    {
+      std::cout << "*** WARNING: Reflector: client " << addr << ":" << port
+                << " supplied a UDP cipher key of invalid length; "
+                   "ignoring datagram" << std::endl;
+      return true;
+    }
     m_udp_sock->setCipherAADLength(iaad.packedSize());
   }
   else if ((client=ReflectorClient::lookup(std::make_pair(addr, port))))
