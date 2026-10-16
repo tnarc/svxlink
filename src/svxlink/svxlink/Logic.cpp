@@ -485,6 +485,12 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
           //          << std::endl;
           m_ctcss_to_tg_timer.setEnable(false);
         }
+          // Report every squelch flank to the link manager here, rather
+          // than in squelchOpen(), which a logic core type may override and
+          // not always pass on (e.g. RepeaterLogic while the repeater is
+          // down). Otherwise the link manager can be left with a stale
+          // squelch state that keeps ducking/preempting other sources.
+        squelchStateChanged(is_open);
         squelchOpen(is_open);
       });
   rx().dtmfDigitDetected.connect(mem_fun(*this, &Logic::dtmfDigitDetectedP));
@@ -1341,8 +1347,6 @@ Logic::~Logic(void)
 void Logic::squelchOpen(bool is_open)
 {
   //std::cout << "### Logic::squelchOpen: is_open=" << is_open << std::endl;
-
-  squelchStateChanged(is_open);
 
   if (active_module != 0)
   {
