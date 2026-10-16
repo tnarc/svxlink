@@ -23,7 +23,10 @@
 ##############################################################################
 cmake_minimum_required(VERSION 3.7...3.30)
 project(svxlink C CXX)
-enable_testing()
+option(BUILD_TESTING "Build the unit tests" ON)
+if(BUILD_TESTING)
+  enable_testing()
+endif()
 
 # The path to the project global include directory
 set(PROJECT_INCLUDE_DIR ${PROJECT_BINARY_DIR}/include)

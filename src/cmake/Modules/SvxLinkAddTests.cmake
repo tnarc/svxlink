@@ -18,9 +18,17 @@
 # created and may set:
 #   <Name>Test_EXTRA_SRCS  - extra source files to compile into the test
 #   <Name>Test_EXTRA_LIBS  - extra libraries to link
+#   <Name>Test_SKIP        - set to TRUE to not build the test, e.g. when an
+#                            optional dependency it needs was not found
+#
+# Nothing is built when BUILD_TESTING is OFF.
 # Because the sidecar is a separate per-test file, it is also conflict-free.
 
 function(svxlink_add_tests)
+  if(NOT BUILD_TESTING)
+    return()
+  endif()
+
   cmake_parse_arguments(SAT "" "" "LIBS" ${ARGN})
 
   file(GLOB _svxlink_test_srcs CONFIGURE_DEPENDS
@@ -31,9 +39,13 @@ function(svxlink_add_tests)
 
     set(${_name}_EXTRA_SRCS "")
     set(${_name}_EXTRA_LIBS "")
+    set(${_name}_SKIP FALSE)
     set(_sidecar "${CMAKE_CURRENT_SOURCE_DIR}/${_name}.deps.cmake")
     if(EXISTS "${_sidecar}")
       include("${_sidecar}")
+    endif()
+    if(${_name}_SKIP)
+      continue()
     endif()
 
     add_executable(${_name} "${_src}" ${${_name}_EXTRA_SRCS})

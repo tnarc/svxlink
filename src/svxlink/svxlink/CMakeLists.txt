@@ -100,10 +100,15 @@ endforeach()
 # sources; those are declared in <Name>.deps.cmake sidecars next to the test.
 svxlink_add_tests(LIBS asynccpp asynccore)
 
-# Smoke test: every TCL event script loads cleanly under tclsh
-add_test(NAME tcl_event_scripts_load
-  COMMAND ${CMAKE_COMMAND} -E env python3
-          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_tcl_loads.py)
+# Smoke test: every TCL event script loads cleanly under tclsh. The test
+# exits with code 77 (reported as skipped) if no tclsh can be found.
+if(BUILD_TESTING)
+  add_test(NAME tcl_event_scripts_load
+    COMMAND ${CMAKE_COMMAND} -E env python3
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_tcl_loads.py
+            ${TCL_TCLSH})
+  set_tests_properties(tcl_event_scripts_load PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 # Integration tests for non-upstream audio modes and announce-on-all-logics
 add_test(NAME announce_on_all_logics

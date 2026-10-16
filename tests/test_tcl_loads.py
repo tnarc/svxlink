@@ -74,13 +74,28 @@ def load_logic(logic_name, logic_type):
             f.write('set report_ctcss 0.0\n')
             f.write(f'source "{events_tcl}"\n')
             f.write('exit 0\n')
-        return subprocess.run(["tclsh", wrapper], capture_output=True,
+        return subprocess.run([TCLSH, wrapper], capture_output=True,
                               text=True, timeout=30)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Exit code that CTest reports as "skipped" (SKIP_RETURN_CODE)
+SKIP_RETURN_CODE = 77
+
+# The tclsh to use: the path CMake found (first argument), else from PATH
+TCLSH = None
+
+
 def main():
+    global TCLSH
+    if len(sys.argv) > 1 and sys.argv[1]:
+        TCLSH = sys.argv[1]
+    else:
+        TCLSH = shutil.which("tclsh")
+    if not TCLSH:
+        print("SKIP: no tclsh found")
+        return SKIP_RETURN_CODE
     for logic_name, logic_type in LOGIC_TYPES:
         r = load_logic(logic_name, logic_type)
         ok = r.returncode == 0
