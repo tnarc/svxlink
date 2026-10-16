@@ -32,6 +32,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include "LinkManager.h"
@@ -404,10 +405,23 @@ void test_duck_warns_for_reflector_member_but_still_works(void)
     // inside buildLinks) sees TYPE=Reflector; buildLinks then overwrites it
     // to "Test" afterwards so the FakeLogic itself still initializes fine.
   cfg.setValue("Logic1", "TYPE", string("Reflector"));
+  cfg.setValue("Logic2", "TYPE", string("Dummy"));
   FakeLogic* lg[3];
+    // Capture what the link manager prints while the links are set up
+  std::ostringstream err;
+  std::streambuf* orig_cerr = std::cerr.rdbuf(err.rdbuf());
   buildLinks(cfg, "L", lg);
+  std::cerr.rdbuf(orig_cerr);
   LinkManager* lm = LinkManager::instance();
 
+  check(err.str().find("member logic \"Logic1\" is TYPE=Reflector") !=
+            string::npos,
+        "warning printed for the Reflector-type member");
+  check(err.str().find("member logic \"Logic2\" is TYPE=Dummy") !=
+            string::npos,
+        "warning printed for the Dummy-type member");
+  check(err.str().find("member logic \"Logic3\"") == string::npos,
+        "no warning printed for the Simplex-type member");
   check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
         "link still functions normally despite the Reflector-type warning");
   teardown(lg);
