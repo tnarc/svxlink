@@ -145,6 +145,12 @@ class AudioMixer : public sigc::trackable, public Async::AudioSource
     void removeSource(AudioSource *source);
 
     /**
+     * @brief   Get the number of sources added to the mixer
+     * @return  Returns the number of sources currently in the mixer
+     */
+    size_t sourceCount(void) const { return sources.size(); }
+
+    /**
      * @brief Resume audio output to the sink
      * 
      * This function will be called when the registered audio sink is ready

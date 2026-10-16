@@ -1058,6 +1058,17 @@ void LinkManager::playDtmfAll(LogicBase *src_logic, const std::string& digits,
 } /* LinkManager::playDtmfAll */
 
 
+size_t LinkManager::sinkMixerSourceCount(const std::string& sink_name) const
+{
+  SinkMap::const_iterator sit = sinks.find(sink_name);
+  if (sit == sinks.end())
+  {
+    return 0;
+  }
+  return sit->second.mixer->sourceCount();
+} /* LinkManager::sinkMixerSourceCount */
+
+
 bool LinkManager::linkValveOpen(const std::string& src_name,
                                 const std::string& sink_name) const
 {

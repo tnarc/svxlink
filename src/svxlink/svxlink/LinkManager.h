@@ -371,6 +371,15 @@ class LinkManager : public sigc::trackable
                        const std::string& sink_name) const;
 
     /**
+     * @brief   Get the number of sources in a sink's audio mixer
+     * @param   sink_name The name of the sink logic
+     * @return  Returns the number of mixer sources, 0 for an unknown sink
+     *
+     * This is primarily intended for testing.
+     */
+    size_t sinkMixerSourceCount(const std::string& sink_name) const;
+
+    /**
      * @brief   Get the current gain (dB) applied to a link connection
      * @param   src_name  The source logic name
      * @param   sink_name The sink logic name

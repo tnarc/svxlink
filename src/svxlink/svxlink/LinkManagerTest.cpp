@@ -360,10 +360,16 @@ void test_delete_logic_no_crash(void)
   LinkManager* lm = LinkManager::instance();
 
   check(lm->linkValveOpen("Logic2", "Logic3"), "valve open before delete");
+  const size_t mix2 = lm->sinkMixerSourceCount("Logic2");
+  const size_t mix3 = lm->sinkMixerSourceCount("Logic3");
 
     // Delete Logic1 while Logic2 and Logic3 remain linked. Logic2's and
     // Logic3's mixers each held an amp sourced from Logic1's splitter.
   lm->deleteLogic(lg[0]);
+
+  check((lm->sinkMixerSourceCount("Logic2") == mix2 - 1) &&
+        (lm->sinkMixerSourceCount("Logic3") == mix3 - 1),
+        "each remaining mixer drops the source from the deleted logic");
 
   check(lm->linkValveOpen("Logic2", "Logic3"),
         "remaining connection unaffected by deleting an unrelated logic");
