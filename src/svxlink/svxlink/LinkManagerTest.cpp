@@ -116,8 +116,18 @@ class FakeLogic : public LogicBase
  */
 void buildLinks(Config& cfg, const string& links, FakeLogic* logics[3])
 {
-  LinkManager::initialize(cfg, links);
   const char* names[3] = {"Logic1", "Logic2", "Logic3"};
+    // Unless a test says otherwise, the logics stand in for Simplex logics
+    // as far as the link configuration checks are concerned
+  for (int i = 0; i < 3; ++i)
+  {
+    string type;
+    if (!cfg.getValue(names[i], "TYPE", type))
+    {
+      cfg.setValue(names[i], "TYPE", string("Simplex"));
+    }
+  }
+  LinkManager::initialize(cfg, links);
   for (int i = 0; i < 3; ++i)
   {
     cfg.setValue(names[i], "TYPE", string("Test"));
