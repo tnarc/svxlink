@@ -20,7 +20,10 @@ import sys
 import traceback
 from contextlib import contextmanager
 
-from harness import SvxlinkHarness, LinkSpec
+import os
+
+import harness
+from harness import SvxlinkHarness, LinkSpec, SAMPLE_RATE
 
 F1, F2, FLOCAL = 1000, 1600, 800     # distinct, non-harmonic test tones
 NO_MUTE = {"MUTE_RX_ON_TX": "0", "MUTE_TX_ON_RX": "0"}
@@ -149,7 +152,68 @@ def test_priority_with_hangtime_still_preempts():
                 f"measured {_db(muted / before):.1f} dB")
 
 
+def _close_squelch(h, logic, freq, timeout=8.0):
+    """Drive the logic's VOX squelch closed by streaming near-silence until the
+    log reports the close (a Local UDP RX never re-evaluates VOX to silence
+    once streaming just stops)."""
+    import time
+    marker = f"Rx_{logic}: The squelch is CLOSED"
+    before = h.read_log().count(marker)
+    s = harness._ToneStreamer(h.by_name[logic].rx_port, freq, SAMPLE_RATE, 0)
+    s.start()
+    try:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if h.read_log().count(marker) > before:
+                return
+            time.sleep(0.1)
+        raise RuntimeError(f"squelch for {logic} did not close within {timeout}s")
+    finally:
+        s.stop()
+
+
+def test_duck_not_stuck_after_repeater_taken_down_with_carrier():
+    """A repeater taken down while its squelch is open must still report the
+    squelch close to the link layer. Otherwise DUCK keeps ducking the link
+    audio into it after it is brought back, as if it were still receiving."""
+    import time
+    links = [LinkSpec("L", ["Logic1", "Logic2"], default_active=True,
+                      audio_mode="DUCK", duck_level_db=-20)]
+    h = SvxlinkHarness(num_logics=2, logic_type="Repeater", links=links,
+                       logic_opts=dict(NO_MUTE, OPEN_ON_SQL="200",
+                                       OPEN_SQL_FLANK="OPEN",
+                                       IDLE_TIMEOUT="1"))
+    cmd_pty = os.path.join(h.tmp, "logic1_cmd")
+    h.per_logic_opts = {"Logic1": {"COMMAND_PTY": cmd_pty}}
+    h.setup()
+    h.start()
+    try:
+        h.start_talk("Logic1", FLOCAL)       # local carrier brings Logic1 up
+        time.sleep(1.5)
+        fd = os.open(cmd_pty, os.O_WRONLY)
+        try:
+            os.write(fd, b"CFG Logic1 ONLINE 0\n")   # down, carrier present
+            time.sleep(0.5)
+            h.stop_talk("Logic1")
+            _close_squelch(h, "Logic1", FLOCAL)        # carrier drops
+            os.write(fd, b"CFG Logic1 ONLINE 1\n")   # back online
+            time.sleep(0.5)
+        finally:
+            os.close(fd)
+
+        h.start_talk("Logic2", F2)           # remote station on the link
+        time.sleep(1.0)
+        level = h.tone_level("Logic1", F2, 1.2)
+        h.stop_talk("Logic2")
+        _assert(level > 800,
+                f"link audio into Logic1 must not be ducked any more after its "
+                f"squelch closed, got {level:.0f}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
+    test_duck_not_stuck_after_repeater_taken_down_with_carrier,
     test_mix_carries_all_sources,
     test_first_carries_only_the_first_source,
     test_duck_reduces_incoming_when_local_squelch_opens,
