@@ -357,9 +357,10 @@ bool LinkManager::initialize(Async::Config &cfg,
 
       // DUCK and PRIORITY both key off a member logic's local squelch state
       // (LogicBase::squelchStateChanged), which is only ever emitted by the
-      // Logic base class (Simplex/Repeater logics). ReflectorLogic and
-      // ReflectorV2Logic derive directly from LogicBase and never emit it,
-      // so a member of that type can never be the "local" side of a
+      // Logic base class (Simplex/Repeater logics). Every other logic core
+      // type (e.g. Reflector, ReflectorV2, Dummy, or a plugin such as Sip or
+      // Announce) derives directly from LogicBase and never emits it, so a
+      // member of such a type can never be the "local" side of a
       // DUCK/PRIORITY link - warn at config time rather than silently never
       // ducking/preempting.
     if ((link.audio_mode == LinkAudioMode::DUCK) ||
@@ -370,7 +371,7 @@ bool LinkManager::initialize(Async::Config &cfg,
         const std::string& logic_name = logic_prop.first;
         std::string logic_type;
         cfg.getValue(logic_name, "TYPE", logic_type);
-        if ((logic_type == "Reflector") || (logic_type == "ReflectorV2"))
+        if ((logic_type != "Simplex") && (logic_type != "Repeater"))
         {
           std::cerr << "*** WARNING: Link " << link.name << " uses AUDIO_MODE="
                     << ((link.audio_mode == LinkAudioMode::DUCK) ?
