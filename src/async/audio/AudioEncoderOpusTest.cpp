@@ -81,6 +81,20 @@ int main(void)
   enc.setFrameSize(40.0f);
   check(enc.frameSize() > 0, "valid FRAME_SIZE (40 ms) applied");
 
+    // A rejected frame size reports the frame size still in use, in ms (the
+    // same unit as the argument and as the value returned on success).
+  check(enc.setFrameSize(-1.0f) == 40.0f,
+        "rejected FRAME_SIZE returns the current frame size in ms");
+
+    // Shrinking the frame size while a partial frame is buffered must not
+    // keep filling past the end of the new, smaller buffer.
+  vector<float> partial(enc.frameSize() / 2, 0.0f);
+  enc.writeSamples(partial.data(), static_cast<int>(partial.size()));
+  enc.setFrameSize(2.5f);
+  vector<float> more(4 * enc.frameSize(), 0.0f);
+  enc.writeSamples(more.data(), static_cast<int>(more.size()));
+  check(true, "writeSamples after shrinking FRAME_SIZE did not overrun");
+
   cout << (failures == 0 ? "ALL TESTS PASSED" : "TESTS FAILED") << endl;
   return failures != 0;
 } /* main */
