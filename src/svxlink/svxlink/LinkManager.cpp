@@ -1270,11 +1270,6 @@ void LinkManager::updateConnections(void)
                  want.begin(), want.end(),
                  inserter(to_disconnect, to_disconnect.end()));
 
-    // Sinks touched by a valve open/close below need their duck/priority
-    // gain recomputed once the connection set has settled (see the loop at
-    // the bottom of this function).
-  std::set<std::string> affected_sinks;
-
   for (auto it = to_disconnect.begin(); it != to_disconnect.end(); ++it)
   {
     const string &src_name = it->first;
@@ -1298,7 +1293,6 @@ void LinkManager::updateConnections(void)
 
       // Delete the link connect information
     current_cons.erase(*it);
-    affected_sinks.insert(sink_name);
   }
 
     // Calculate the difference between the wanted connection set and the
@@ -1326,7 +1320,6 @@ void LinkManager::updateConnections(void)
     sinks.at(sink_name).amps.at(src_name)->setGain(0);
 
     current_cons.insert(*it);
-    affected_sinks.insert(sink_name);
   }
 
     // Reconcile the effective audio mode for EVERY established connection, not
@@ -1360,14 +1353,24 @@ void LinkManager::updateConnections(void)
     // Update mixer routing based on active MIX/DUCK/PRIORITY connections
   updateMixerRouting();
 
-    // Recompute duck/priority gain for every sink touched by a valve
-    // open/close above, using the *current* squelch/priority state. This
-    // ensures a sink whose connection just became active picks up the
-    // correct gain immediately (e.g. reactivating a DUCK link while the
-    // sink's squelch happens to already be open) instead of waiting for the
-    // next squelch transition to notice.
-  for (const auto &sink_name : affected_sinks)
+    // The set of established connections may have changed, which changes
+    // which priority sources count as active, so update the priority
+    // hangtime state first (e.g. a PRIORITY link activated while its source
+    // is already transmitting must get a hangtime when the source unkeys).
+  checkPriorityHangtime();
+
+    // Recompute duck/priority gain and preemption for every sink, using the
+    // *current* squelch/priority state. This ensures a sink whose connection
+    // just became active picks up the correct gain immediately (e.g.
+    // reactivating a DUCK link while the sink's squelch happens to already
+    // be open) instead of waiting for the next squelch transition to notice.
+    // It must cover all sinks, not only those whose connections changed
+    // above, since the reconciliation loop re-enables FIRST-mode auto-select
+    // on every established connection, including ones that a PRIORITY
+    // source is currently preempting.
+  for (const auto &sink_pair : sinks)
   {
+    const std::string& sink_name = sink_pair.first;
     bool squelch_open = false;
     LogicMap::iterator logic_it = logic_map.find(sink_name);
     if (logic_it != logic_map.end())
@@ -1857,6 +1860,10 @@ bool LinkManager::isPrioritySourceActive(const std::string& sink_name)
   {
     const std::string& src_name = amp_pair.first;
 
+      // Only a source with an established connection into this sink counts
+      // (e.g. not a muted logic)
+    if (current_cons.count(std::make_pair(src_name, sink_name)) == 0) continue;
+
       // Check if this source's squelch is open
     LogicMap::iterator it = logic_map.find(src_name);
     if (it == logic_map.end() || !it->second.squelch_open) continue;
@@ -2023,6 +2030,12 @@ void LinkManager::checkPriorityHangtime(void)
       {
         const std::string& src_name = src_prop.first;
         if (src_name == sink_name) continue;
+          // Same rule as in isPrioritySourceActive: only a source with an
+          // established connection into the sink counts
+        if (current_cons.count(std::make_pair(src_name, sink_name)) == 0)
+        {
+          continue;
+        }
         LogicMap::iterator it = logic_map.find(src_name);
         if (it != logic_map.end() && it->second.squelch_open)
         {
