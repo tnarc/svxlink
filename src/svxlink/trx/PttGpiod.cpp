@@ -300,7 +300,9 @@ bool PttGpiod::initialize(Async::Config &cfg, const std::string name)
     req_cfg.flags |= GPIOD_LINE_REQUEST_FLAG_ACTIVE_LOW;
   }
 
-  int ret = gpiod_line_request(m_line, &req_cfg, active_low ? 1 : 0);
+    // The default value is a logical value: with the ACTIVE_LOW flag set,
+    // libgpiod does the inversion, so 0 means PTT off in both cases.
+  int ret = gpiod_line_request(m_line, &req_cfg, 0);
   if (ret < 0)
   {
     std::cerr << "*** ERROR: Set GPIOD line \"" << line
