@@ -132,12 +132,56 @@ def test_repeater_announce_broadcast_and_repeat():
         h.cleanup()
 
 
+# Unknown DTMF commands drive the announce-all flag from TCL (each logic has
+# its own interpreter and sources its own local <logic name>.tcl): on Logic2
+# the flag is switched on and left on, on Logic1 an announcement is played to
+# all logics. So when Logic1's announcement is mirrored to Logic2, Logic2 has
+# its own announce-all flag set too.
+_ANNOUNCE_FLAG_TCL = {
+    "Logic1.tcl": """
+proc ::${::logic_name}::unknown_command {cmd} {
+  ::setAnnounceOnAllLogics 1
+  playMsg "Core" "activating_link_to"
+  ::setAnnounceOnAllLogics 0
+}
+""",
+    "Logic2.tcl": """
+proc ::${::logic_name}::unknown_command {cmd} {
+  ::setAnnounceOnAllLogics 1
+}
+""",
+}
+
+
+def test_broadcast_does_not_recurse_between_real_logics():
+    """An announcement mirrored to a logic that has its own announce-all flag
+    set must not be broadcast again from there. Otherwise the two logics keep
+    re-broadcasting to each other until the process crashes."""
+    h = SvxlinkHarness(num_logics=2,
+                       local_event_tcl=_ANNOUNCE_FLAG_TCL)
+    h.setup()
+    for clip in LINK_CLIPS:
+        h.add_sound_clip("en_US", "Core", clip)
+    h.start()
+    try:
+        h.count_tx_after(lambda: h.send_dtmf("Logic2", "77#"), window=1.0)
+        counts = h.count_tx_after(lambda: h.send_dtmf("Logic1", "77#"),
+                                  window=2.0)
+        _assert(h.proc.poll() is None,
+                "svxlink must still be running after the broadcast")
+        _assert(counts["Logic1"] > 0 and counts["Logic2"] > 0,
+                f"the announcement should key both ports, got {counts}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_link_up_broadcasts_to_all_ports,
     test_link_down_broadcasts_to_all_ports,
     test_excluded_logic_is_skipped_by_broadcast,
     test_local_announcement_stays_on_one_port,
     test_repeater_announce_broadcast_and_repeat,
+    test_broadcast_does_not_recurse_between_real_logics,
 ]
 
 
