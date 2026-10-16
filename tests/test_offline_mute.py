@@ -125,7 +125,27 @@ def test_offline_logic_stops_forwarding_audio():
                 f"got {reonline:.0f}")
 
 
+def test_logic_started_offline_does_not_forward_audio():
+    """A logic configured to start offline (ONLINE=0) must not relay its RX
+    audio to linked logics either, not only one taken offline later on."""
+    links = [LinkSpec("L", ["Logic1", "Logic2"], prefix="91",
+                      default_active=True)]
+    h = SvxlinkHarness(num_logics=2, logic_type="Simplex", links=links,
+                       logic_opts=NO_MUTE,
+                       per_logic_opts={"Logic1": {"ONLINE": "0"}})
+    h.setup()
+    h.start()
+    try:
+        offline = _relay_level(h)
+        _assert(offline < 150,
+                f"a logic started offline must NOT relay its audio over the "
+                f"link, got {offline:.0f}")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
+    test_logic_started_offline_does_not_forward_audio,
     test_offline_logic_stops_forwarding_audio,
 ]
 
