@@ -1723,9 +1723,19 @@ void LinkManager::updateMixerRouting(void)
       }
       if (sink.selector->sink() != sink.sink)
       {
+        const bool was_feeding_mixer =
+            (sink.selector->sink() == sink.selector_feed);
         if (sink.selector->isRegistered())
         {
           sink.selector->unregisterSink();
+        }
+          // If the selector was feeding the mixer, it may have been cut off
+          // in the middle of a stream. Flush the feed so that the mixer does
+          // not keep waiting for samples from it, which would stall every
+          // other mixer source the next time the mixer is used.
+        if (was_feeding_mixer)
+        {
+          sink.selector_feed->flushSamples();
         }
         sink.selector->registerSink(sink.sink);
       }
