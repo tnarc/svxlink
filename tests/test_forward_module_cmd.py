@@ -255,12 +255,46 @@ def test_session_ends_when_link_dropped():
         h.cleanup()
 
 
+def test_mutual_forward_rules_do_not_loop():
+    """Two logics that forward the same id to each other (a configuration
+    mistake) must not bounce the command between them until svxlink crashes
+    with a stack overflow. The command fails and svxlink keeps running."""
+    h = SvxlinkHarness(
+        num_logics=2,
+        logic_type="Simplex",
+        links=[LinkSpec("Bridge", ["Logic1", "Logic2"], default_active=True)],
+        per_logic_opts={
+            "Logic1": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:Logic2"},
+            "Logic2": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:Logic1"},
+        },
+    )
+    h.setup()
+    h.start()
+    try:
+        h.send_dtmf("Logic1", MODULE_ID + "#")
+        looped = _wait_log(h, "would create a forwarding loop")
+        time.sleep(1.0)
+        _assert(h.proc.poll() is None,
+                "svxlink died after dialling a command forwarded in a loop")
+        _assert(looped, "no forwarding loop warning logged")
+        # The band port must not be left in forwarding mode: a local command
+        # (manual identification) still works.
+        n = h.count_tx_after(lambda: h.send_dtmf("Logic1", "*#"),
+                             window=3.0)["Logic1"]
+        _assert(n > 0, "Logic1 does not process local commands after the "
+                "forwarding loop was refused")
+        _assert(h.proc.poll() is None, "svxlink died")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_forward_activates_module_on_target,
     test_second_port_gets_busy,
     test_deactivate_frees_for_all,
     test_session_not_left_open_when_target_busy,
     test_session_ends_when_link_dropped,
+    test_mutual_forward_rules_do_not_loop,
 ]
 
 

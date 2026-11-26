@@ -152,6 +152,9 @@ using namespace SvxLink;
  *
  ****************************************************************************/
 
+std::set<const Logic*> Logic::s_fwd_in_progress;
+
+
 Logic::Logic(void)
   : m_rx(0),  	      	      	            m_tx(0),
     msg_handler(0), 	      	            active_module(0),
@@ -1311,6 +1314,22 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     return;
   }
 
+    // Refuse to forward a command that is itself being forwarded to this
+    // logic from a logic it would be forwarded back to, e.g. when A has
+    // FORWARD_MODULE_CMD=2:B and B has 2:A. Without this, the activation
+    // command would bounce between the logics until the stack overflowed.
+    // Chains (A -> B -> C) still work since no logic appears twice.
+  if ((s_fwd_in_progress.count(this) != 0) ||
+      (s_fwd_in_progress.count(target) != 0))
+  {
+    cerr << "*** WARNING: " << name() << ": FORWARD_MODULE_CMD for command "
+         << cmd_id << " to logic \"" << target_logic << "\" would create a "
+         << "forwarding loop. Check the FORWARD_MODULE_CMD configuration of "
+         << "the involved logics.\n";
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
     // First-owner-locks: if the shared module is already in use (busy) and
     // this port does not already own the session, respond busy rather than
     // interleaving into the session.
@@ -1340,12 +1359,14 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     // the target. Subsequent live command digits are forwarded individually
     // by dtmfDigitDetected, including the operator's own '#' terminators.
   std::string to_inject = cmd_id + sub + "#";
+  s_fwd_in_progress.insert(this);
   for (unsigned i = 0; i < to_inject.size(); ++i)
   {
     target->m_in_forwarded_inject = true;
     target->injectDtmfDigit(to_inject[i], 100);
     target->m_in_forwarded_inject = false;
   }
+  s_fwd_in_progress.erase(this);
 
     // The target may have refused to activate the module, e.g. because
     // another module is already active there. Then there is no session to

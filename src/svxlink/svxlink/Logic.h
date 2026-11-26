@@ -43,6 +43,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <list>
 #include <map>
 #include <vector>
+#include <set>
 #include <stdint.h>
 
 #include <sigc++/sigc++.h>
@@ -366,6 +367,9 @@ class Logic : public LogicBase
     std::string                     m_fwd_active_cmd_id;
       // Guard against forwarded injects bouncing back into forwarding.
     bool                            m_in_forwarded_inject         {false};
+      // The logics that are currently delivering a forwarded module command
+      // to their target (FORWARD_MODULE_CMD loop detection)
+    static std::set<const Logic*>   s_fwd_in_progress;
       // Busy/ownership state for module command ids hosted on a target logic
       // and reflected to this logic via cross-logic state sync. Maps
       // "<target_logic>:<cmd_id>" to the owning logic name ("" == free).
