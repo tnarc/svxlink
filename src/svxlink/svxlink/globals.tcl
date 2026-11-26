@@ -299,10 +299,19 @@ proc playMsg {context msg {warn 1}} {
 #
 #   body - A TCL script that plays the announcement
 #
+# Calls may be nested: broadcasting stays enabled until the outermost block
+# ends.
+#
+set ::announce_on_all_logics_depth 0
 proc announceOnAllLogics {body} {
-  ::setAnnounceOnAllLogics 1
+  if {[incr ::announce_on_all_logics_depth] == 1} {
+    ::setAnnounceOnAllLogics 1
+  }
   set code [catch {uplevel 1 $body} result options]
-  ::setAnnounceOnAllLogics 0
+  if {[incr ::announce_on_all_logics_depth -1] <= 0} {
+    set ::announce_on_all_logics_depth 0
+    ::setAnnounceOnAllLogics 0
+  }
   return -options $options $result
 }
 

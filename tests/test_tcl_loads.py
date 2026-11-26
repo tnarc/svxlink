@@ -81,6 +81,41 @@ def load_logic(logic_name, logic_type):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Nested announceOnAllLogics blocks: broadcasting must stay enabled for the
+# rest of the outer block after an inner block ends, also when the inner block
+# raises an error, and be disabled after the outermost block.
+NESTED_ANNOUNCE = r"""
+proc setAnnounceOnAllLogics {enable} { set ::cur $enable }
+set ::cur 0
+set ::rec {}
+announceOnAllLogics {
+  lappend ::rec $::cur
+  announceOnAllLogics { lappend ::rec $::cur }
+  lappend ::rec $::cur
+  catch { announceOnAllLogics { error "boom" } }
+  lappend ::rec $::cur
+}
+lappend ::rec $::cur
+puts $::rec
+"""
+
+
+def nested_announce():
+    tmp = tempfile.mkdtemp(prefix="tcltest_")
+    try:
+        wrapper = os.path.join(tmp, "run.tcl")
+        with open(wrapper, "w") as f:
+            f.write(STUBS)
+            f.write('set logic_name "SimplexLogic"\n')
+            f.write(f'source "{os.path.join(TCL_SRC, "globals.tcl")}"\n')
+            f.write(NESTED_ANNOUNCE)
+            f.write('exit 0\n')
+        return subprocess.run([TCLSH, wrapper], capture_output=True,
+                              text=True, timeout=30)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # Exit code that CTest reports as "skipped" (SKIP_RETURN_CODE)
 SKIP_RETURN_CODE = 77
 
@@ -106,6 +141,10 @@ def main():
             print("    --- stderr/stdout ---")
             for line in (r.stderr + r.stdout).splitlines()[-15:]:
                 print("    " + line)
+    r = nested_announce()
+    check(r.returncode == 0 and r.stdout.strip().splitlines()[-1:] == ["1 1 1 1 0"],
+          "nested announceOnAllLogics keeps broadcasting until the outermost "
+          f"block ends (got {r.stdout.strip()!r} {r.stderr.strip()!r})")
     print()
     print("PASS" if failures == 0 else f"{failures} check(s) FAILED")
     return 1 if failures else 0
