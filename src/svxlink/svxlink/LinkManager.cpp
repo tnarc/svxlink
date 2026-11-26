@@ -1678,6 +1678,15 @@ void LinkManager::onPublishStateEvent(LogicBase *src_logic,
   //     << "  event_name=" << event_name
   //     << "  msg=" << msg
   //     << endl;
+    // "ModuleFwd:state <cmd_id> 0" means that a forwarded module is free
+  bool is_fwd_module_free = false;
+  if (event_name == "ModuleFwd:state")
+  {
+    std::istringstream is(msg);
+    std::string cmd_id;
+    int active = 1;
+    is_fwd_module_free = (is >> cmd_id >> active) && (active == 0);
+  }
   const ConMap& con_map = sinks[src_logic->name()].connectors;
   for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
   {
@@ -1685,6 +1694,17 @@ void LinkManager::onPublishStateEvent(LogicBase *src_logic,
     LogicBase *logic = logic_map.at(logic_name).logic;
     if ((logic != src_logic) && logicsConnected(src_logic->name(), logic_name))
     {
+      logic->remoteReceivedPublishStateEvent(src_logic, event_name, msg);
+    }
+    else if ((logic != src_logic) && is_fwd_module_free &&
+             (dynamic_cast<Logic*>(logic) != nullptr))
+    {
+        // A forwarded module (FORWARD_MODULE_CMD) went idle on the target
+        // logic. Band ports that are no longer linked to the target (e.g. the
+        // link was deactivated while the module was active) must still hear
+        // that it is free, or they would keep reporting it busy forever.
+        // Receiving the free event is harmless for a logic that never held
+        // the module.
       logic->remoteReceivedPublishStateEvent(src_logic, event_name, msg);
     }
   }

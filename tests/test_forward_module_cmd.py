@@ -255,6 +255,40 @@ def test_session_ends_when_link_dropped():
         h.cleanup()
 
 
+def test_module_freed_while_unlinked_is_free_after_relink():
+    """If the link is deactivated while a forwarded module is active on the
+    target and the module then goes idle, band ports must not keep a stale
+    busy entry for it: once the link is back, another port can take it."""
+    h = _make_harness()
+    try:
+        h.read_state(TARGET)
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
+                         window=2.5)
+        _assert(_module_active(h) is True, "module should be active after L1")
+
+        # Another port drops the link, then the module is deactivated locally
+        # on the target while nothing is linked to it
+        h.count_tx_after(lambda: h.send_dtmf("Logic2", "91#"), window=1.5)
+        _assert(_wait_log(h, "Deactivating link Bridge"),
+                "the link should have been deactivated")
+        h.read_state(TARGET)
+        h.count_tx_after(lambda: h.send_dtmf(TARGET, "#"), window=2.5)
+        _assert(_module_active(h) is False,
+                "target should report the module idle after deactivation")
+
+        # Bring the link back and let another port take the module
+        h.count_tx_after(lambda: h.send_dtmf("Logic2", "911#"), window=1.5)
+        h.read_state(TARGET)
+        h.count_tx_after(lambda: h.send_dtmf("Logic2", MODULE_ID + "#"),
+                         window=2.5)
+        _assert("is in use by another port" not in h.read_log(),
+                "Logic2 still believes the module is in use")
+        _assert(_module_active(h) is True,
+                "Logic2 should be able to activate the freed module")
+    finally:
+        h.cleanup()
+
+
 def test_mutual_forward_rules_do_not_loop():
     """Two logics that forward the same id to each other (a configuration
     mistake) must not bounce the command between them until svxlink crashes
@@ -294,6 +328,7 @@ TESTS = [
     test_deactivate_frees_for_all,
     test_session_not_left_open_when_target_busy,
     test_session_ends_when_link_dropped,
+    test_module_freed_while_unlinked_is_free_after_relink,
     test_mutual_forward_rules_do_not_loop,
 ]
 
