@@ -160,6 +160,7 @@ class LinkManager : public sigc::trackable
 {
   private:
     struct Link;
+    class LogicInFeed;
 
   public:
     typedef Link& LinkRef;
@@ -492,7 +493,14 @@ class LinkManager : public sigc::trackable
     typedef std::map<std::string, Async::AudioAmp *> AmpMap;
     struct SinkInfo
     {
+        // The audio input of the logic core. Only the feed below is
+        // registered to it.
       Async::AudioSink        *sink;
+        // Permanent passthrough into the logic input, driven by either the
+        // selector or the mixer. It tracks whether the logic input has an
+        // open (not flushed) audio stream so that the stream can be ended
+        // when the selector/mixer feeding it is swapped out mid-stream.
+      LogicInFeed             *feed;
       Async::AudioSelector    *selector;      // Used in FIRST mode
       Async::AudioMixer       *mixer;         // Used in MIX/DUCK mode
         // Passthrough that feeds the selector output into the mixer as one more

@@ -34,6 +34,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "LinkManager.h"
 #include "LogicBase.h"
@@ -1121,6 +1122,156 @@ class MixStallTest : public sigc::trackable
     }
 };
 
+// When the selector or mixer feeding a logic input is swapped out in the
+// middle of an over, the logic input must still see the end of the stream.
+// Otherwise the transmitter of that logic stays keyed. Covers the last MIX
+// connection into a sink going away (link deactivation and logic mute) and a
+// MIX link activating while a FIRST source streams into the sink, the source
+// ending before any sample passed through the mixer.
+class StreamEndTest : public sigc::trackable
+{
+  public:
+    std::function<void()> on_done;
+
+    void run(void)
+    {
+      cout << "test_stream_end_reaches_logic_input_on_reroute" << endl;
+      m_timer.expired.connect(sigc::hide(
+          sigc::mem_fun(*this, &StreamEndTest::step)));
+      m_timer.setEnable(true);
+    }
+
+  private:
+    class StreamSink : public AudioSink
+    {
+      public:
+        bool open = false;
+        int flushes = 0;
+        int writeSamples(const float*, int count) override
+        {
+          open = true;
+          return count;
+        }
+        void flushSamples(void) override
+        {
+          open = false;
+          ++flushes;
+          sourceAllSamplesFlushed();
+        }
+    };
+
+    struct Scenario
+    {
+      const char* name;
+      const char* mode_a;       // Link A: Logic1,Logic2, active
+      const char* mode_b;       // Link B: Logic1,Logic3, inactive (or null)
+      int         action;       // What happens mid-over, see step()
+    };
+    enum { ACT_NONE, ACT_DEACTIVATE, ACT_MUTE, ACT_ACTIVATE_B };
+
+    Config      *m_cfg = nullptr;
+    FakeLogic*  m_lg[3];
+    StreamSink  m_sink;
+    Timer       m_timer {20, Timer::TYPE_PERIODIC, false};
+    float       m_buf[160] = {0};
+    size_t      m_scenario = 0;
+    int         m_phase = 0;
+    std::vector<Scenario> m_scenarios {
+      {"FIRST, nothing changes", "FIRST", nullptr, ACT_NONE},
+      {"FIRST, link deactivated", "FIRST", nullptr, ACT_DEACTIVATE},
+      {"MIX, link deactivated", "MIX", nullptr, ACT_DEACTIVATE},
+      {"DUCK, link deactivated", "DUCK", nullptr, ACT_DEACTIVATE},
+      {"PRIORITY, link deactivated", "PRIORITY", nullptr, ACT_DEACTIVATE},
+      {"MIX, sink muted", "MIX", nullptr, ACT_MUTE},
+      {"PRIORITY, sink muted", "PRIORITY", nullptr, ACT_MUTE},
+      {"FIRST source, MIX link activated", "FIRST", "MIX", ACT_ACTIVATE_B},
+    };
+
+    AudioPassthrough *out(int idx)
+    {
+      return dynamic_cast<AudioPassthrough*>(m_lg[idx]->logicConOut());
+    }
+
+    void write(int idx, int blocks)
+    {
+      for (int i = 0; i < blocks; ++i)
+      {
+        out(idx)->writeSamples(m_buf, 160);
+      }
+    }
+
+    void step(void)
+    {
+      if (m_scenario >= m_scenarios.size())
+      {
+        m_timer.setEnable(false);
+        Application::app().runTask(on_done);
+        return;
+      }
+      const Scenario& sc = m_scenarios[m_scenario];
+      LinkManager* lm = nullptr;
+      switch (m_phase++)
+      {
+        case 0:
+          m_cfg = new Config;
+          m_cfg->setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+          m_cfg->setValue("A", "AUDIO_MODE", string(sc.mode_a));
+          m_cfg->setValue("A", "DEFAULT_ACTIVE", string("1"));
+          if (sc.mode_b != nullptr)
+          {
+            m_cfg->setValue("B", "CONNECT_LOGICS", string("Logic1,Logic3"));
+            m_cfg->setValue("B", "AUDIO_MODE", string(sc.mode_b));
+          }
+          buildLinks(*m_cfg, (sc.mode_b != nullptr) ? "A,B" : "A", m_lg);
+          m_sink = StreamSink();
+          dynamic_cast<AudioPassthrough*>(m_lg[0]->logicConIn())
+            ->registerSink(&m_sink);
+            // Logic2 starts an over into Logic1
+          write(1, 5);
+          break;
+        case 1:
+          lm = LinkManager::instance();
+          check(m_sink.open, string(sc.name) + ": stream open at the sink");
+          switch (sc.action)
+          {
+            case ACT_DEACTIVATE:
+              lm->deactivateLinkByName("A");
+              write(1, 2);
+              break;
+            case ACT_MUTE:
+              lm->setLogicMute(m_lg[0], true);
+              write(1, 2);
+              break;
+            case ACT_ACTIVATE_B:
+                // The source ends before any sample passes the mixer
+              lm->activateLinkByName("B");
+              break;
+            default:
+              write(1, 2);
+              break;
+          }
+          out(1)->flushSamples();
+          break;
+        case 2:
+          check(!m_sink.open,
+                string(sc.name) + ": logic input saw the end of the stream");
+          if (sc.action == ACT_NONE)
+          {
+            check(m_sink.flushes == 1,
+                  string(sc.name) + ": exactly one flush reached the sink");
+          }
+          dynamic_cast<AudioPassthrough*>(m_lg[0]->logicConIn())
+            ->unregisterSink();
+          teardown(m_lg);
+          delete m_cfg;
+          m_cfg = nullptr;
+          m_phase = 0;
+          ++m_scenario;
+          break;
+      }
+    }
+};
+
 } /* anonymous namespace */
 
 
@@ -1159,7 +1310,9 @@ int main(void)
     // Event-loop tests, run one after the other. The last one quits the app.
   HangtimeTest hangtime;
   MixStallTest mix_stall;
-  hangtime.on_done = [&mix_stall]() { mix_stall.run(); };
+  StreamEndTest stream_end;
+  hangtime.on_done = [&stream_end]() { stream_end.run(); };
+  stream_end.on_done = [&mix_stall]() { mix_stall.run(); };
   hangtime.run();
   app.exec();
 

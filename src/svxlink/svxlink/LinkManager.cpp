@@ -124,6 +124,64 @@ namespace
 
 } // End of anonymous namespace
 
+
+/**
+ * @brief Permanent feed into a logic's audio input
+ *
+ * The selector (FIRST mode) or the mixer (MIX/DUCK/PRIORITY) driving a logic
+ * input is swapped by updateMixerRouting when connections change. An
+ * AudioSource that is unregistered from its sink does not flush it, so when
+ * the swap happened in the middle of an over the logic input never saw the
+ * end of the stream and the transmitter stayed keyed. This feed sits between
+ * the selector/mixer and the logic input, remembers whether a stream is open
+ * and lets updateMixerRouting end it when the source is swapped out. The
+ * completion of such an internally generated flush is not reported upstream,
+ * since the source that is registered by then did not ask for it.
+ */
+class LinkManager::LogicInFeed : public AudioPassthrough
+{
+  public:
+    int writeSamples(const float *samples, int count) override
+    {
+      m_stream_open = true;
+      m_upstream_flush = false;
+      return AudioPassthrough::writeSamples(samples, count);
+    }
+
+    void flushSamples(void) override
+    {
+      m_stream_open = false;
+      m_upstream_flush = true;
+      AudioPassthrough::flushSamples();
+    }
+
+    void allSamplesFlushed(void) override
+    {
+      if (m_upstream_flush)
+      {
+        m_upstream_flush = false;
+        AudioPassthrough::allSamplesFlushed();
+      }
+    }
+
+      // Call when the source feeding this object has just been unregistered
+      // and before a new one is registered. If the old source left a stream
+      // open, flush it so that the logic input sees the end of the stream.
+    void endStream(void)
+    {
+      m_upstream_flush = false;
+      if (m_stream_open)
+      {
+        m_stream_open = false;
+        AudioPassthrough::flushSamples();
+      }
+    }
+
+  private:
+    bool m_stream_open = false;
+    bool m_upstream_flush = false;
+};
+
 /****************************************************************************
  *
  * Exported Global Variables
@@ -399,8 +457,10 @@ void LinkManager::addLogic(LogicBase *logic)
 
     // Create a selector for the logic being added to receive audio from all
     // other sinks. Used in FIRST mode.
+  LogicInFeed *feed = new LogicInFeed;
+  feed->registerSink(logic->logicConIn());
   AudioSelector *selector = new AudioSelector;
-  selector->registerSink(logic->logicConIn());
+  selector->registerSink(feed);
 
     // Create a mixer for MIX mode. The mixer output will be connected
     // to the logic input when MIX mode connections are activated.
@@ -417,6 +477,7 @@ void LinkManager::addLogic(LogicBase *logic)
 
     // Register the new logic sink
   sinks[logic->name()].sink = logic->logicConIn();
+  sinks[logic->name()].feed = feed;
   sinks[logic->name()].selector = selector;
   sinks[logic->name()].mixer = mixer;
   sinks[logic->name()].selector_feed = selector_feed;
@@ -640,6 +701,9 @@ void LinkManager::deleteLogic(LogicBase *logic)
     // destroyed with the mixer). Deleting the selector above already detached
     // it as the selector's sink, so it now has no source or sink.
   delete sink_to_delete.selector_feed;
+    // Both the selector and the mixer are gone, so nothing feeds the logic
+    // input feed any more
+  delete sink_to_delete.feed;
   sinks.erase(logic->name());
 
     // Finally remove the logic from the logic_map
@@ -1702,11 +1766,17 @@ void LinkManager::updateMixerRouting(void)
         {
           sink.selector->unregisterSink();
         }
+          // The selector may have been in the middle of a stream into the
+          // logic input. End it here: the mixer only flushes a stream that it
+          // has written to itself, so if the selector source stops before any
+          // sample has passed through the mixer the end of the stream would
+          // otherwise never reach the logic input.
+        sink.feed->endStream();
         sink.selector->registerSink(sink.selector_feed);
       }
       if (!sink.mixer->isRegistered())
       {
-        sink.mixer->registerSink(sink.sink);
+        sink.mixer->registerSink(sink.feed);
       }
     }
     else
@@ -1716,8 +1786,12 @@ void LinkManager::updateMixerRouting(void)
       if (sink.mixer->isRegistered())
       {
         sink.mixer->unregisterSink();
+          // Unregistering does not flush the logic input, so if the mixer was
+          // in the middle of a stream, end it here. Otherwise the logic input
+          // never sees the end of the stream and the transmitter stays keyed.
+        sink.feed->endStream();
       }
-      if (sink.selector->sink() != sink.sink)
+      if (sink.selector->sink() != sink.feed)
       {
         const bool was_feeding_mixer =
             (sink.selector->sink() == sink.selector_feed);
@@ -1733,7 +1807,7 @@ void LinkManager::updateMixerRouting(void)
         {
           sink.selector_feed->flushSamples();
         }
-        sink.selector->registerSink(sink.sink);
+        sink.selector->registerSink(sink.feed);
       }
     }
   }
