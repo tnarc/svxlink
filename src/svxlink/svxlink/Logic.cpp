@@ -2281,6 +2281,15 @@ void Logic::flushDeferredAnnouncement(void)
   m_announce_on_all_logics = saved_announce_all;
   LogicBase::setScheduledAnnouncement(saved_sched);
   m_replaying_deferred = false;
+
+    // If the replay did not queue anything (e.g. a DTMF op with no digits),
+    // allMsgsWritten will not be called for it, so drop the forced CTCSS
+    // keying here instead of leaving it on until some later message drains.
+  if (!msg_handler->isWritingMessage())
+  {
+    setForceCtcss(false);
+    updateTxCtcss(false, TX_CTCSS_SCHEDULED);
+  }
 } /* Logic::flushDeferredAnnouncement */
 
 

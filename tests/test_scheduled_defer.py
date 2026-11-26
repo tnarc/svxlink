@@ -65,6 +65,11 @@ proc ::${::logic_name}::sched_announce {} {
     playMsg "unknown_command"
   }
 }
+proc ::${::logic_name}::sched_empty {} {
+  scheduledAnnouncement {
+    playDtmf "" 500 100
+  }
+}
 """
 
 
@@ -99,9 +104,9 @@ def _build(logic_type, defer, max_delay=None):
     return h, os.open(cmd_path, os.O_WRONLY)
 
 
-def _trigger(cmd_fd):
+def _trigger(cmd_fd, event="sched_announce"):
     """Fire the scheduled announcement on Logic1 via its COMMAND_PTY."""
-    os.write(cmd_fd, b"EVENT sched_announce\n")
+    os.write(cmd_fd, f"EVENT {event}\n".encode())
 
 
 def _capture(h, logic_name, window, action=None, hush=False):
@@ -214,10 +219,34 @@ def _holds_while_busy(max_delay):
         h.cleanup()
 
 
+def test_empty_replay_does_not_leave_ctcss_forced():
+    """Simplex: a deferred scheduled announcement whose replay queues nothing
+    (a DTMF op with no digits) must not leave the CTCSS tone forced on, so a
+    later ordinary scheduled announcement is still tone-less."""
+    h, fd = _build("Simplex", defer=True)
+    try:
+        h.start_talk("Logic1", TALK_FQ)
+        time.sleep(0.6)
+        _capture(h, "Logic1", 1.0, action=lambda: _trigger(fd, "sched_empty"))
+        h.stop_talk("Logic1")
+        _capture(h, "Logic1", 2.0, hush=True)       # replay (nothing queued)
+        n, ct = _capture(h, "Logic1", 2.5, action=lambda: _trigger(fd),
+                         hush=True)
+        _assert(n > TRANSMITTED_SAMPLES,
+                f"idle scheduled announcement should transmit, got {n}")
+        _assert(ct < CTCSS_ABSENT,
+                f"CTCSS still forced after an empty deferred replay, "
+                f"got ctcss={ct:.1f}")
+    finally:
+        os.close(fd)
+        h.cleanup()
+
+
 TESTS = [
     test_defer_holds_then_replays_with_ctcss,
     test_interrupts_busy_channel_after_max_delay,
     test_holds_indefinitely_without_max_delay,
+    test_empty_replay_does_not_leave_ctcss_forced,
 ]
 
 
