@@ -38,6 +38,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <cstdlib>
 #include <cctype>
 #include <cmath>
+#include <algorithm>
 #include <json/json.h>
 
 
@@ -156,9 +157,17 @@ namespace {
                                                            : Rx::ID_UNKNOWN;
   }
 
+    // Limit signal strength values received from the network to a range
+    // that can safely be converted to an integer. Real values are far
+    // smaller.
   float validSignalStrength(float siglev)
   {
-    return std::isfinite(siglev) ? siglev : 0.0f;
+    const float max_siglev = 1000.0f;
+    if (!std::isfinite(siglev))
+    {
+      return 0.0f;
+    }
+    return std::max(-max_siglev, std::min(siglev, max_siglev));
   }
 } /* anonymous namespace */
 

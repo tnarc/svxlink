@@ -35,6 +35,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <iostream>
 #include <cstring>
 #include <cerrno>
+#include <cmath>
+#include <algorithm>
 
 
 /****************************************************************************
@@ -116,10 +118,9 @@ using namespace NetTrxMsg;
  ****************************************************************************/
 
 namespace {
-  bool isValidModulation(Modulation::Type mod)
-  {
-    return (mod >= Modulation::MOD_FM) && (mod <= Modulation::MOD_WBCW);
-  }
+    // Signal strength values passed on from the network are limited to this
+    // range. Real values are far smaller.
+  const float MAX_SIGNAL_STRENGTH = 1000.0f;
 } /* anonymous namespace */
 
 
@@ -556,7 +557,7 @@ void NetUplink::handleMsg(Msg *msg)
     {
       MsgSetRxModulation *mod_msg = reinterpret_cast<MsgSetRxModulation*>(msg);
       if ((msg->size() != sizeof(MsgSetRxModulation)) ||
-          !isValidModulation(mod_msg->modulation()))
+          !mod_msg->isValid())
       {
         std::cerr << "*** ERROR: Illegal SetRxModulation message received in "
                   << "NetUplink " << name << ". Ignoring it." << std::endl;
@@ -600,9 +601,7 @@ void NetUplink::handleMsg(Msg *msg)
     {
       MsgSetTxCtrlMode *mode_msg = reinterpret_cast<MsgSetTxCtrlMode *>(msg);
       if ((msg->size() != sizeof(MsgSetTxCtrlMode)) ||
-          ((mode_msg->mode() != Tx::TX_OFF) &&
-           (mode_msg->mode() != Tx::TX_ON) &&
-           (mode_msg->mode() != Tx::TX_AUTO)))
+          !mode_msg->isValid())
       {
         std::cerr << "*** ERROR: Illegal SetTxCtrlMode message received in "
                   << "NetUplink " << name << ". Ignoring it." << std::endl;
@@ -749,8 +748,18 @@ void NetUplink::handleMsg(Msg *msg)
     {
       MsgTransmittedSignalStrength *siglev_msg =
         reinterpret_cast<MsgTransmittedSignalStrength *>(msg);
-      tx->setTransmittedSignalStrength(siglev_msg->sqlRxId(),
-                                       siglev_msg->signalStrength());
+      float siglev = siglev_msg->signalStrength();
+      if ((msg->size() != sizeof(MsgTransmittedSignalStrength)) ||
+          !std::isfinite(siglev))
+      {
+        std::cerr << "*** ERROR: Illegal TransmittedSignalStrength message "
+                  << "received in NetUplink " << name << ". Ignoring it."
+                  << std::endl;
+        break;
+      }
+      siglev = std::max(-MAX_SIGNAL_STRENGTH,
+                        std::min(siglev, MAX_SIGNAL_STRENGTH));
+      tx->setTransmittedSignalStrength(siglev_msg->sqlRxId(), siglev);
       break;
     }
     
@@ -767,7 +776,7 @@ void NetUplink::handleMsg(Msg *msg)
     {
       MsgSetTxModulation *mod_msg = reinterpret_cast<MsgSetTxModulation*>(msg);
       if ((msg->size() != sizeof(MsgSetTxModulation)) ||
-          !isValidModulation(mod_msg->modulation()))
+          !mod_msg->isValid())
       {
         std::cerr << "*** ERROR: Illegal SetTxModulation message received in "
                   << "NetUplink " << name << ". Ignoring it." << std::endl;
