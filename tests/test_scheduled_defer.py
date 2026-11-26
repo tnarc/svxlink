@@ -192,16 +192,22 @@ def test_interrupts_busy_channel_after_max_delay():
 
 
 def test_holds_indefinitely_without_max_delay():
-    """Repeater control: without a max delay, a deferred announcement keeps
-    waiting while the channel stays busy and never cuts in."""
-    h, fd = _build("Repeater", defer=True)
+    """Repeater control: with the max delay explicitly disabled (0), and with
+    it unset (default 300 s, far longer than the capture window), a deferred
+    announcement keeps waiting while the channel stays busy."""
+    for max_delay in (0, None):
+        _holds_while_busy(max_delay)
+
+
+def _holds_while_busy(max_delay):
+    h, fd = _build("Repeater", defer=True, max_delay=max_delay)
     try:
         h.start_talk("Logic1", TALK_FQ)
         time.sleep(0.6)
         n, ct = _capture(h, "Logic1", 3.0, action=lambda: _trigger(fd))
         h.stop_talk("Logic1")
         _assert(ct < CTCSS_ABSENT,
-                f"announcement must stay held while busy (no max delay), "
+                f"announcement must stay held while busy (max delay {max_delay}), "
                 f"got ctcss={ct:.1f}")
     finally:
         os.close(fd)

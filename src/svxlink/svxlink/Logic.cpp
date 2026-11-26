@@ -458,12 +458,20 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
 
     // Defer scheduled announcements while the channel is busy and replay them
     // at the first silence (keying CTCSS so all listeners hear them). If
-    // SCHEDULED_ANNOUNCEMENT_MAX_DELAY (seconds) is set and elapses while the
-    // channel is still busy, the announcement interrupts the active traffic.
+    // SCHEDULED_ANNOUNCEMENT_MAX_DELAY (seconds) elapses while the channel is
+    // still busy, the announcement interrupts the active traffic. When it is
+    // not set, a finite default is used so that a channel that never goes
+    // idle (e.g. a stuck carrier) cannot hold the announcements back forever.
+    // An explicit 0 means wait indefinitely.
   cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_DEFER",
                  m_defer_sched_announcements);
+  m_sched_announcement_max_delay = DEFAULT_SCHED_ANNOUNCEMENT_MAX_DELAY;
   cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_MAX_DELAY",
                  m_sched_announcement_max_delay);
+  if (m_sched_announcement_max_delay < 0)
+  {
+    m_sched_announcement_max_delay = 0;
+  }
 
   AudioSource *prev_rx_src = 0;
 

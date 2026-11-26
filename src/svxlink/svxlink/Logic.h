@@ -349,6 +349,8 @@ class Logic : public LogicBase
     std::string                     m_macro_prefix                {"D"};
     bool                            m_announce_on_all_logics      {false};
     bool                            m_defer_sched_announcements   {false};
+      // Default for SCHEDULED_ANNOUNCEMENT_MAX_DELAY in seconds
+    static const int DEFAULT_SCHED_ANNOUNCEMENT_MAX_DELAY = 300;
     int                             m_sched_announcement_max_delay {0};
     bool                            m_sched_busy_at_start         {false};
     bool                            m_replaying_deferred          {false};
