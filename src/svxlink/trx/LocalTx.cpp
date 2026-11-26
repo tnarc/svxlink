@@ -265,9 +265,19 @@ LocalTx::~LocalTx(void)
     // or was never called (e.g. unknown/missing PTT_TYPE or an early
     // config-error return), since all callers still delete the Tx object
     // in that case.
-  if (ptt != 0)
+  if ((ptt != 0) && !setPtt(false))
   {
-    setPtt(false);
+    cerr << "*** WARNING: Could not turn off the PTT for transmitter "
+         << name() << ".\n";
+  }
+
+    // Likewise drop the CTCSS encode line before its PTT object is deleted
+    // below. Otherwise a CTCSS_PTT line that was keyed when svxlink is
+    // stopped stays asserted.
+  if ((ctcss_ptt != 0) && !ctcss_ptt->setTxOn(false))
+  {
+    cerr << "*** WARNING: Could not turn off the CTCSS encode PTT for "
+         << "transmitter " << name() << ".\n";
   }
 
   if (audio_io != 0)
@@ -1039,7 +1049,12 @@ void LocalTx::updateCtcssPtt(void)
       // Mirror the same condition used for the main PTT line so the encode
       // line drops together with the carrier on a TX timeout instead of
       // staying keyed with no carrier present.
-    ctcss_ptt->setTxOn(isTransmitting() && !tx_timeout_occured && ctcss_enable);
+    if (!ctcss_ptt->setTxOn(isTransmitting() && !tx_timeout_occured &&
+                            ctcss_enable))
+    {
+      cerr << "*** WARNING: Could not set the CTCSS encode PTT for "
+           << "transmitter " << name() << ".\n";
+    }
   }
 } /* LocalTx::updateCtcssPtt */
 
