@@ -2357,7 +2357,11 @@ void ReflectorLogic::handleTimerTick(Async::Timer *t)
     }
   }
 
-  if (--m_udp_heartbeat_tx_cnt == 0)
+  if (m_udp_heartbeat_tx_cnt > 0)
+  {
+    --m_udp_heartbeat_tx_cnt;
+  }
+  if (m_udp_heartbeat_tx_cnt == 0)
   {
     if (m_con_state == STATE_EXPECT_UDP_HEARTBEAT)
     {
@@ -2369,7 +2373,11 @@ void ReflectorLogic::handleTimerTick(Async::Timer *t)
     }
   }
 
-  if (--m_tcp_heartbeat_tx_cnt == 0)
+  if (m_tcp_heartbeat_tx_cnt > 0)
+  {
+    --m_tcp_heartbeat_tx_cnt;
+  }
+  if (m_tcp_heartbeat_tx_cnt == 0)
   {
     sendMsg(MsgHeartbeat());
   }
