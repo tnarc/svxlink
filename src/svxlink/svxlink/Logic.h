@@ -367,6 +367,11 @@ class Logic : public LogicBase
     std::string                     m_fwd_active_target;
       // The module command id that opened the current forwarding session.
     std::string                     m_fwd_active_cmd_id;
+      // Forwarding session: true when the next digit starts a new command,
+      // and true while a command that is handled locally (one that starts
+      // with '*') is being received
+    bool                            m_fwd_at_cmd_start            {true};
+    bool                            m_fwd_local_cmd               {false};
       // Guard against forwarded injects bouncing back into forwarding.
     bool                            m_in_forwarded_inject         {false};
       // The logics that are currently delivering a forwarded module command

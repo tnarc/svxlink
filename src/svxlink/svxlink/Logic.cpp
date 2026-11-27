@@ -1126,14 +1126,35 @@ void Logic::dtmfDigitDetected(char digit, int duration)
         LinkManager::instance()->logicsAreLinked(name(), m_fwd_active_target) &&
         target->forwardedModuleActiveOrPending(m_fwd_active_cmd_id))
     {
-        // Mark the target so a forwarded inject can never be re-forwarded
-        // (loop guard), then deliver the digit to its own command path.
-      target->m_in_forwarded_inject = true;
-      target->injectDtmfDigit(digit, duration);
-      target->m_in_forwarded_inject = false;
-      return;
+        // A command that starts with '*' is a core command, also when a
+        // module is active. Forwarding it would let the users of this port
+        // run every core command of the target logic (its link commands,
+        // the ONLINE command...), which goes far beyond using the forwarded
+        // module. Handle such a command on this logic instead, which also
+        // keeps this port's own core commands available during a session.
+      if (m_fwd_at_cmd_start)
+      {
+        m_fwd_local_cmd = (digit == '*');
+      }
+      m_fwd_at_cmd_start = (digit == '#');
+      if (!m_fwd_local_cmd)
+      {
+          // Mark the target so a forwarded inject can never be re-forwarded
+          // (loop guard), then deliver the digit to its own command path.
+        target->m_in_forwarded_inject = true;
+        target->injectDtmfDigit(digit, duration);
+        target->m_in_forwarded_inject = false;
+        return;
+      }
+      if (digit == '#')
+      {
+        m_fwd_local_cmd = false;
+      }
     }
-    endForwardingSession();
+    else
+    {
+      endForwardingSession();
+    }
   }
 
   if (active_module != 0)
@@ -1358,6 +1379,8 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     // path, exactly as if they had been received locally on the target.
   m_fwd_active_target = target_logic;
   m_fwd_active_cmd_id = cmd_id;
+  m_fwd_at_cmd_start = true;
+  m_fwd_local_cmd = false;
   std::cout << name() << ": Forwarding module command " << cmd_id << " to "
             << target_logic << std::endl;
 
@@ -2342,6 +2365,8 @@ void Logic::endForwardingSession(void)
             << m_fwd_active_target << std::endl;
   m_fwd_active_target.clear();
   m_fwd_active_cmd_id.clear();
+  m_fwd_at_cmd_start = true;
+  m_fwd_local_cmd = false;
 } /* Logic::endForwardingSession */
 
 
