@@ -194,6 +194,14 @@ bool ReflectorLogic::initialize(Async::Config& cfgobj, const std::string& logic_
   m_logic_con_out = new Async::AudioStreamStateDetector;
   m_logic_con_out->sigStreamStateChanged.connect(
       sigc::mem_fun(*this, &ReflectorLogic::onLogicConOutStreamStateChanged));
+    // Report the incoming talker audio to the logic linking layer, the same
+    // way that the Simplex and Repeater logics report their squelch state,
+    // so that the DUCK and PRIORITY link audio modes act on traffic from the
+    // reflector. The stream is active while decoded talker audio leaves this
+    // logic and stops being active as soon as the talker stream ends
+    // (flush from the reflector, audio timeout or disconnection).
+  m_logic_con_out->sigStreamIsActive.connect(
+      [this](bool is_active) { squelchStateChanged(is_active); });
 
   if (!LogicBase::initialize(cfgobj, logic_name))
   {

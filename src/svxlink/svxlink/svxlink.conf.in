@@ -155,7 +155,10 @@ DEFAULT_ACTIVE=1
 #ACTIVATE_ON_TG=SimplexLogic:240.*,ReflectorLogic:2403|2404|123
 # RepeaterLogic and ReflectorLogic are connected via SimplexLogic when both
 # links are active. That connection uses the strongest AUDIO_MODE of the two.
-#AUDIO_MODE=MIX
+# A reflector logic reports remote talker audio as its own traffic, so it can
+# be a PRIORITY source or make a DUCK link duck the audio sent to it.
+#AUDIO_MODE=PRIORITY
+#PRIORITY_SOURCES=ReflectorLogic
 
 [Macros]
 1=EchoLink:9999#

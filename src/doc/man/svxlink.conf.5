@@ -1226,14 +1226,20 @@ the audio into logics that are reached via chained links. The first such
 PRIORITY link in GLOBAL/LINKS decides PRIORITY_MUTE_DB and PRIORITY_HANGTIME
 for the pre-empted logic.
 .IP
-DUCK and PRIORITY both key off a member logic's local squelch state (whether
-it is currently receiving traffic). This is only reported by logic cores
-of TYPE=Simplex or TYPE=Repeater. A logic of any other type (e.g.
-TYPE=Reflector, TYPE=ReflectorV2 or TYPE=Dummy) never reports a local squelch
-state, so including one of those in a DUCK or PRIORITY link will never
-trigger ducking/preemption based on that member's own traffic (a warning is
-printed at startup if this is detected). The other, Logic-based, members of the same
-link are unaffected and continue to work normally. In a PRIORITY link, only the
+DUCK and PRIORITY both key off a member logic's own traffic. A logic core of
+TYPE=Simplex or TYPE=Repeater reports its receiver squelch state. A logic core
+of TYPE=Reflector or TYPE=ReflectorV2 reports the audio from remote talkers
+that it receives from the reflector server and passes on to the link. That is
+the talker audio on the selected talk group. The activity ends when the remote
+talker stream ends, when no talker audio has been received for a few seconds
+or when the connection to the reflector server is lost. So a reflector logic
+can be a priority source of a PRIORITY link, and in a DUCK link the audio sent
+to the reflector is ducked while a remote talker is heard. A logic of any other
+type (e.g. TYPE=Dummy or a logic core plugin) never reports its own traffic,
+so including one of those in a DUCK or PRIORITY link will never trigger
+ducking/preemption based on that member's own traffic (a warning is printed at
+startup if this is detected). The other members of the same link are
+unaffected and continue to work normally. In a PRIORITY link, only the
 priority sources (see PRIORITY_SOURCES) need to report their traffic.
 .TP
 .B DUCK_LEVEL_DB

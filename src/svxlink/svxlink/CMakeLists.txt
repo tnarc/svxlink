@@ -127,6 +127,10 @@ add_test(NAME ctcss
 add_test(NAME stuck_tx
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_stuck_tx.py)
+add_test(NAME reflector_activity
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_reflector_activity.py)
+set_tests_properties(reflector_activity PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME scheduled_announcement_defer
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_scheduled_defer.py)

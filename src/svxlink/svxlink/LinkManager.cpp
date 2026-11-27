@@ -499,14 +499,13 @@ bool LinkManager::initialize(Async::Config &cfg,
       }
     }
 
-      // DUCK and PRIORITY both key off a member logic's local squelch state
-      // (LogicBase::squelchStateChanged), which is only ever emitted by the
-      // Logic base class (Simplex/Repeater logics). Every other logic core
-      // type (e.g. Reflector, ReflectorV2, Dummy, or a plugin such as Sip or
-      // Announce) derives directly from LogicBase and never emits it, so a
-      // member of such a type can never be the "local" side of a
-      // DUCK/PRIORITY link - warn at config time rather than silently never
-      // ducking/preempting.
+      // DUCK and PRIORITY both key off a member logic's own traffic, which it
+      // reports with LogicBase::squelchStateChanged. The Simplex and Repeater
+      // logics report their receiver squelch and the Reflector and
+      // ReflectorV2 logics their incoming talker audio. Other logic core
+      // types (e.g. Dummy, or a plugin) do not report anything, so such a
+      // member can never be the "local" side of a DUCK/PRIORITY link - warn
+      // at config time rather than silently never ducking/preempting.
     if ((link.audio_mode == LinkAudioMode::DUCK) ||
         (link.audio_mode == LinkAudioMode::PRIORITY))
     {
@@ -522,14 +521,15 @@ bool LinkManager::initialize(Async::Config &cfg,
         }
         std::string logic_type;
         cfg.getValue(logic_name, "TYPE", logic_type);
-        if ((logic_type != "Simplex") && (logic_type != "Repeater"))
+        if ((logic_type != "Simplex") && (logic_type != "Repeater") &&
+            (logic_type != "Reflector") && (logic_type != "ReflectorV2"))
         {
           std::cerr << "*** WARNING: Link " << link.name << " uses AUDIO_MODE="
                     << ((link.audio_mode == LinkAudioMode::DUCK) ?
                         "DUCK" : "PRIORITY")
                     << " but member logic \"" << logic_name
                     << "\" is TYPE=" << logic_type << ", which never reports "
-                       "a local squelch state. DUCK/PRIORITY audio "
+                       "its own traffic. DUCK/PRIORITY audio "
                        "ducking/preemption keyed off this logic's own "
                        "traffic will never trigger; see the AUDIO_MODE "
                        "documentation in svxlink.conf(5) for details."

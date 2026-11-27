@@ -370,6 +370,13 @@ class LogicBase : public Async::Plugin, public sigc::trackable
     /**
      * @brief   A signal emitted when the squelch state changes
      * @param   is_open \em True if squelch is open, \em false if closed
+     *
+     * This signal tells the logic linking layer when this logic core is
+     * receiving traffic of its own that it passes on to linked logics. It is
+     * used by the DUCK and PRIORITY link audio modes. A logic core with a
+     * receiver emits it when the receiver squelch opens and closes. A logic
+     * core without a receiver may emit it when it starts and stops passing
+     * incoming audio on, e.g. a reflector logic on talker audio.
      */
     sigc::signal<void(bool)> squelchStateChanged;
 

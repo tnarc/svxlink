@@ -488,42 +488,54 @@ void test_duck_gain_reset_on_deactivate_reactivate(void)
   teardown(lg);
 }
 
-// A DUCK/PRIORITY link with a Reflector-type member logic can never actually
-// duck/preempt on that member's traffic, since ReflectorLogic/ReflectorV2Logic
-// never emit squelchStateChanged (only the Logic base class does). This must
-// only warn at initialize(), not crash or otherwise disrupt the link, which
-// keeps working normally (just never ducking on the Reflector member).
-void test_duck_warns_for_reflector_member_but_still_works(void)
+// A DUCK/PRIORITY link member must report its own traffic for the link to
+// duck/preempt on it. Simplex and Repeater logics report their squelch and the
+// Reflector and ReflectorV2 logics their incoming talker audio, but e.g. a
+// Dummy logic reports nothing. That must only warn at initialize(), not crash
+// or otherwise disrupt the link, which keeps working normally.
+void test_duck_warns_only_for_members_without_activity(void)
 {
-  cout << "test_duck_warns_for_reflector_member_but_still_works" << endl;
+  cout << "test_duck_warns_only_for_members_without_activity" << endl;
   Config cfg;
-  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("L", "CONNECT_LOGICS",
+               string("Logic1,Logic2,Logic3,Logic4"));
   cfg.setValue("L", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("L", "DUCK_LEVEL_DB", string("-15"));
   cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
-    // Set before buildLinks() so LinkManager::initialize() (called first,
-    // inside buildLinks) sees TYPE=Reflector; buildLinks then overwrites it
+    // Set before buildLinksN() so LinkManager::initialize() (called first,
+    // inside buildLinksN) sees these types; buildLinksN then overwrites them
     // to "Test" afterwards so the FakeLogic itself still initializes fine.
   cfg.setValue("Logic1", "TYPE", string("Reflector"));
   cfg.setValue("Logic2", "TYPE", string("Dummy"));
-  FakeLogic* lg[3];
+  cfg.setValue("Logic3", "TYPE", string("ReflectorV2"));
+  FakeLogic* lg[4];
     // Capture what the link manager prints while the links are set up
   std::ostringstream err;
   std::streambuf* orig_cerr = std::cerr.rdbuf(err.rdbuf());
-  buildLinks(cfg, "L", lg);
+  buildLinksN(cfg, "L", lg, 4);
   std::cerr.rdbuf(orig_cerr);
   LinkManager* lm = LinkManager::instance();
 
-  check(err.str().find("member logic \"Logic1\" is TYPE=Reflector") !=
-            string::npos,
-        "warning printed for the Reflector-type member");
+  check(err.str().find("member logic \"Logic1\"") == string::npos,
+        "no warning printed for the Reflector-type member");
   check(err.str().find("member logic \"Logic2\" is TYPE=Dummy") !=
             string::npos,
         "warning printed for the Dummy-type member");
   check(err.str().find("member logic \"Logic3\"") == string::npos,
+        "no warning printed for the ReflectorV2-type member");
+  check(err.str().find("member logic \"Logic4\"") == string::npos,
         "no warning printed for the Simplex-type member");
   check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
-        "link still functions normally despite the Reflector-type warning");
-  teardown(lg);
+        "link still functions normally despite the Dummy-type warning");
+
+    // A reflector logic reports talker activity the same way as a squelch
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic4", "Logic1"), -15.0f),
+        "audio into the reflector member is ducked on its talker activity");
+  lg[0]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic4", "Logic1"), 0.0f),
+        "duck released when the reflector talker stops");
+  teardownN(lg, 4);
 }
 
 // PRIORITY: a non-priority source is muted to PRIORITY_MUTE_DB while a
@@ -1665,7 +1677,7 @@ int main(void)
   test_delete_logic_no_crash();
   test_duck_gain();
   test_duck_gain_reset_on_deactivate_reactivate();
-  test_duck_warns_for_reflector_member_but_still_works();
+  test_duck_warns_only_for_members_without_activity();
   test_priority_gain();
   test_priority_preemption_survives_unrelated_link_change();
   test_priority_hangtime_after_activation_while_keyed();

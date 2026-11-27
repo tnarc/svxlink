@@ -183,7 +183,7 @@ class SvxlinkHarness:
     def __init__(self, num_logics=3, link_prefix="91", logic_type="Simplex",
                  links=None, logic_opts=None, per_logic_opts=None,
                  tx_opts=None, local_event_tcl=None, per_tx_opts=None,
-                 extra_sections=None, global_opts=None):
+                 extra_sections=None, global_opts=None, extra_logics=None):
         self.num_logics = num_logics
         self.link_prefix = link_prefix
         self.logic_type = logic_type
@@ -207,6 +207,9 @@ class SvxlinkHarness:
         # Extra "KEY=VALUE" lines added to the [GLOBAL] section, e.g.
         # {"MODULE_PATH": "/path/to/build/lib"} so loadable modules are found.
         self.global_opts = global_opts or {}
+        # Names of extra logic cores (e.g. a reflector logic) appended to
+        # GLOBAL/LOGICS. Their sections are given in extra_sections.
+        self.extra_logics = extra_logics or []
         self.tmp = tempfile.mkdtemp(prefix="svxtest_")
         self.logics = [Logic(f"Logic{i + 1}", self.tmp)
                        for i in range(num_logics)]
@@ -265,7 +268,8 @@ class SvxlinkHarness:
     def _render_config(self, event_handler):
         lines = [
             "[GLOBAL]",
-            "LOGICS=" + ",".join(l.name for l in self.logics),
+            "LOGICS=" + ",".join([l.name for l in self.logics] +
+                                 self.extra_logics),
             "LINKS=" + ",".join(lk.name for lk in self.links),
             f"CARD_SAMPLE_RATE={SAMPLE_RATE}",
             f"LOGIC_CORE_PATH={os.path.join(REPO, 'build', 'lib')}",

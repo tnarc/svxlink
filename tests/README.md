@@ -15,7 +15,9 @@ modules — so they work on any Linux machine and in CI.
   ```
 
   The harness looks for `build/bin/svxlink` and `build/lib/*Logic.so` relative
-  to the repository root.
+  to the repository root. `test_reflector_activity.py` also runs a local
+  `build/bin/svxreflector` (target `svxreflector`) and is skipped if it is not
+  built.
 
 * Python 3 (standard library only — no third-party packages).
 
@@ -24,6 +26,7 @@ modules — so they work on any Linux machine and in CI.
 ```sh
 python3 tests/test_announce_all.py     # announce-on-all-logics broadcast
 python3 tests/test_audio_modes.py      # LinkManager AUDIO_MODE behaviour
+python3 tests/test_reflector_activity.py  # DUCK/PRIORITY on reflector talkers
 ```
 
 Each test exits 0 on success, 1 on failure.
