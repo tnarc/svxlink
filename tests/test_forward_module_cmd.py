@@ -63,7 +63,7 @@ def _parrot_tcl():
         return f.read()
 
 
-def _make_harness(with_help=False):
+def _make_harness(with_help=False, target_opts=None):
     """Three Simplex logics in one default-active link. Logic3 hosts
     ModuleParrot; Logic1 and Logic2 are band ports that forward id 1 to it.
     With with_help, Logic3 also hosts ModuleHelp (id 0), which is not
@@ -86,7 +86,7 @@ def _make_harness(with_help=False):
         per_logic_opts={
             "Logic1": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:{TARGET}"},
             "Logic2": {"FORWARD_MODULE_CMD": f"{MODULE_ID}:{TARGET}"},
-            "Logic3": {"MODULES": modules},
+            "Logic3": dict({"MODULES": modules}, **(target_opts or {})),
         },
         # Modules are loaded from MODULE_PATH; point it at the build tree.
         global_opts={"MODULE_PATH": os.path.join(REPO, "build", "lib")},
@@ -303,7 +303,8 @@ def test_module_freed_while_unlinked_is_free_after_relink():
 def test_mutual_forward_rules_do_not_loop():
     """Two logics that forward the same id to each other (a configuration
     mistake) must not bounce the command between them until svxlink crashes
-    with a stack overflow. The command fails and svxlink keeps running."""
+    with a stack overflow. A target only activates a module it hosts, so the
+    command fails and svxlink keeps running."""
     h = SvxlinkHarness(
         num_logics=2,
         logic_type="Simplex",
@@ -317,11 +318,14 @@ def test_mutual_forward_rules_do_not_loop():
     h.start()
     try:
         h.send_dtmf("Logic1", MODULE_ID + "#")
-        looped = _wait_log(h, "would create a forwarding loop")
+        # The target only activates a module it hosts itself, so the command
+        # is not forwarded on and simply fails
+        refused = _wait_log(h, f"Logic1: Module command {MODULE_ID} was not "
+                               f"activated on Logic2")
         time.sleep(1.0)
         _assert(h.proc.poll() is None,
                 "svxlink died after dialling a command forwarded in a loop")
-        _assert(looped, "no forwarding loop warning logged")
+        _assert(refused, "the forwarded command was not refused")
         # The band port must not be left in forwarding mode: a local command
         # (manual identification) still works.
         n = h.count_tx_after(lambda: h.send_dtmf("Logic1", "*#"),
@@ -382,6 +386,40 @@ def test_core_command_refused_on_target_without_hash():
         h.cleanup()
 
 
+def test_activation_cannot_select_a_target_core_command():
+    """The activation command of a session is the forwarded id plus whatever
+    the band user dialled after it. It must go to the forwarded module only,
+    not through the target's core command parser, where the same digits could
+    select another core command that starts with the module id (here the
+    target's ONLINE_CMD 19: "190" would take the target offline)."""
+    h = _make_harness(target_opts={"ONLINE_CMD": "19"})
+    try:
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", "190#"), window=3.0)
+        log = h.read_log()
+        _assert(f"{TARGET}: Setting logic OFFLINE" not in log,
+                "a forwarded activation command ran the target's ONLINE command")
+    finally:
+        h.cleanup()
+
+
+def test_offline_target_not_brought_online():
+    """A target that is offline gets nothing forwarded, so a band user cannot
+    dial its ONLINE command through a session."""
+    h = _make_harness(target_opts={"ONLINE_CMD": "19"})
+    try:
+        h.count_tx_after(lambda: h.send_dtmf(TARGET, "190#"), window=2.0)
+        _assert(_wait_log(h, f"{TARGET}: Setting logic OFFLINE"),
+                "could not take the target offline for the test")
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", "191#"), window=3.0)
+        log = h.read_log()
+        _assert(f"{TARGET}: Setting logic ONLINE" not in log,
+                "a band port brought the offline target online")
+        _assert(f"cannot be forwarded to {TARGET} since it is offline" in log,
+                "the band port did not refuse to forward to an offline target")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_forward_activates_module_on_target,
     test_second_port_gets_busy,
@@ -392,6 +430,8 @@ TESTS = [
     test_mutual_forward_rules_do_not_loop,
     test_core_command_stays_on_band_port,
     test_core_command_refused_on_target_without_hash,
+    test_activation_cannot_select_a_target_core_command,
+    test_offline_target_not_brought_online,
 ]
 
 

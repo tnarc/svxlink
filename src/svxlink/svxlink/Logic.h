@@ -371,6 +371,10 @@ class Logic : public LogicBase
       // that the module itself started
     bool                            m_announce_all_remote         {false};
     int                             m_module_self_activation      {0};
+      // Nesting depth of DTMF commands being processed. A module that
+      // switches itself while one is processed does so for a user (e.g. '#'
+      // to deactivate), which is broadcast as before.
+    int                             m_user_cmd_depth              {0};
     bool                            m_defer_sched_announcements   {false};
       // Default for SCHEDULED_ANNOUNCEMENT_MAX_DELAY in seconds
     static const int DEFAULT_SCHED_ANNOUNCEMENT_MAX_DELAY = 300;
@@ -441,6 +445,8 @@ class Logic : public LogicBase
     void injectForwardedDigit(Logic *target, char digit, int duration);
     bool forwardedCmdAllowed(const std::string& cmd,
                              const std::string& fwd_cmd_id);
+    void activateForwardedModule(const std::string& fwd_cmd_id,
+                                 const std::string& sub);
     void cfgUpdated(const std::string& section, const std::string& tag);
     bool getConfigValue(const std::string& section, const std::string& tag,
                         std::string& value);

@@ -1168,24 +1168,15 @@ void Logic::dtmfDigitDetected(char digit, int duration)
     }
   }
 
-  if (active_module != 0)
+    // Digits forwarded from a band port may only reach the forwarded module
+  if ((active_module != 0) &&
+      (!m_in_forwarded_inject ||
+       (std::to_string(active_module->id()) == m_forwarded_inject_cmd_id)))
   {
     if (active_module->dtmfDigitReceived(digit, duration))
     {
       return;
     }
-  }
-
-    // Remember whether digits of the command that is being received came
-    // through a forwarding session (see forwardedCmdAllowed). A digit that
-    // starts a new command clears the mark.
-  if (m_in_forwarded_inject)
-  {
-    m_cur_cmd_fwd_id = m_forwarded_inject_cmd_id;
-  }
-  else if (dtmf_digit_handler->command().empty())
-  {
-    m_cur_cmd_fwd_id.clear();
   }
 
   dtmf_digit_handler->digitReceived(digit);
@@ -1366,6 +1357,16 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     return;
   }
 
+    // Nothing is forwarded to a logic that is offline
+  if (!target->is_online)
+  {
+    std::cout << name() << ": Module command " << cmd_id << " cannot be "
+              << "forwarded to " << target_logic << " since it is offline"
+              << std::endl;
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
     // If the target has another module active, the activation command (and
     // everything dialled after it) would be handled by that module, i.e. the
     // digits would end up in whatever session is going on there. Treat the
@@ -1454,7 +1455,8 @@ void Logic::setAnnounceOnAllLogics(bool enable)
     // of something a remote party did, e.g. an EchoLink station connecting.
     // Broadcasting its announcement would let anyone who can do that key
     // every transmitter, so only do it when ANNOUNCE_ALL_REMOTE is set.
-  if (enable && (m_module_self_activation > 0) && !m_announce_all_remote)
+  if (enable && (m_module_self_activation > 0) && (m_user_cmd_depth == 0) &&
+      !m_announce_all_remote)
   {
     if (!m_announce_on_all_logics)
     {
@@ -1470,6 +1472,10 @@ void Logic::setAnnounceOnAllLogics(bool enable)
 
 bool Logic::forwardedModuleActiveOrPending(const std::string& cmd_id) const
 {
+  if (active_module != 0)
+  {
+    return std::to_string(active_module->id()) == cmd_id;
+  }
   if (!cmd_queue.empty())
   {
       // Command processing is held back (e.g. while the squelch is open), so
@@ -1509,19 +1515,34 @@ bool Logic::forwardedCmdAllowed(const std::string& cmd,
   {
     return false;
   }
-  if (active_module != 0)
-  {
-    return std::to_string(active_module->id()) == fwd_cmd_id;
-  }
-    // No module is active: only the activation command that opened the
-    // session is accepted, once
-  if (!m_fwd_expected_activation.empty() && (cmd == m_fwd_expected_activation))
-  {
-    m_fwd_expected_activation.clear();
-    return true;
-  }
-  return false;
+    // The activation command that opened the session is handled before this
+    // is called. Anything else needs the forwarded module to be active.
+  return (active_module != 0) &&
+         (std::to_string(active_module->id()) == fwd_cmd_id);
 } /* Logic::forwardedCmdAllowed */
+
+
+void Logic::activateForwardedModule(const std::string& fwd_cmd_id,
+                                    const std::string& sub)
+{
+    // Does what ModuleActivateCmd does for the module command id
+  Module *module = findModule(atoi(fwd_cmd_id.c_str()));
+  if (module == 0)
+  {
+    cout << name() << ": Module command " << fwd_cmd_id << " was forwarded "
+         << "here, but no such module is loaded on this logic" << endl;
+    processEvent("command_failed " + fwd_cmd_id + sub);
+    return;
+  }
+  if (!sub.empty())
+  {
+    module->dtmfCmdReceivedWhenIdle(sub);
+  }
+  else if (!activateModule(module))
+  {
+    processEvent("command_failed " + fwd_cmd_id + sub);
+  }
+} /* Logic::activateForwardedModule */
 
 
 /****************************************************************************
@@ -1979,6 +2000,26 @@ void Logic::processCommandQueue(void)
       fwd_id = cmd_queue_fwd_id.front();
       cmd_queue_fwd_id.pop_front();
     }
+      // The activation command of a forwarding session goes straight to
+      // the forwarded module. Running it through the core command parser
+      // would let the dialled digits after the module id select any core
+      // command that starts with that id.
+    if (!fwd_id.empty() && (active_module == 0) &&
+        !m_fwd_expected_activation.empty() &&
+        (cmd == m_fwd_expected_activation))
+    {
+      m_fwd_expected_activation.clear();
+      stringstream ss;
+      ss << "dtmf_cmd_received \"" << cmd << "\"";
+      processEvent(ss.str());
+      if (atoi(event_handler->eventResult().c_str()) == 0)
+      {
+        ++m_user_cmd_depth;
+        activateForwardedModule(fwd_id, cmd.substr(fwd_id.size()));
+        --m_user_cmd_depth;
+      }
+      continue;
+    }
     if (!fwd_id.empty() && !forwardedCmdAllowed(cmd, fwd_id))
     {
       cout << name() << ": Ignoring command \"" << cmd << "\" received "
@@ -1995,7 +2036,11 @@ void Logic::processCommandQueue(void)
       continue;
     }
 
+      // Module (de)activations made by this command are made by a user
+      // (see setAnnounceOnAllLogics)
+    ++m_user_cmd_depth;
     processCommand(cmd);
+    --m_user_cmd_depth;
 
   }
 } /* Logic::processCommandQueue */
@@ -2149,6 +2194,17 @@ void Logic::putCmdOnQueue(void)
   }
 
   string received_digits = dtmf_digit_handler->command();
+  if (!fwd_id.empty() && !received_digits.empty() && (received_digits[0] == '*'))
+  {
+      // Always refused (see forwardedCmdAllowed). Don't queue it, so that it
+      // cannot take the place of a local "*" either.
+    cout << name() << ": Ignoring command \"" << received_digits
+         << "\" received through a forwarding session for module command "
+         << fwd_id << endl;
+    dtmf_digit_handler->reset();
+    processCommandQueue();
+    return;
+  }
   if ((received_digits != "*") ||
       (find(cmd_queue.begin(), cmd_queue.end(), "*") == cmd_queue.end()))
   {
@@ -2210,6 +2266,20 @@ void Logic::everySecond(AtTimer *t)
 void Logic::dtmfDigitDetectedP(char digit, int duration)
 {
   cout << name() << ": digit=" << digit << endl;
+
+    // Remember whether digits of the command that is being received came
+    // through a forwarding session (see forwardedCmdAllowed). A digit that
+    // starts a new command clears the mark. This is done before anything
+    // else, also when the logic is offline, so that every path that puts a
+    // command together sees the mark.
+  if (m_in_forwarded_inject)
+  {
+    m_cur_cmd_fwd_id = m_forwarded_inject_cmd_id;
+  }
+  else if (dtmf_digit_handler->command().empty())
+  {
+    m_cur_cmd_fwd_id.clear();
+  }
 
   if (!is_online)
   {

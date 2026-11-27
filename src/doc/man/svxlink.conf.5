@@ -434,8 +434,14 @@ interleaving into the session. The target logic publishes the module's
 active/idle state to the bridged logics so every port reflects "in use"/"free".
 .br
 The id specified here must not also be a module loaded locally on this logic;
-the module should live only on the target logic. Forwarding only operates
-between logics that are members of a common, currently activated link.
+the module should live only on the target logic, and the target must load it
+itself: a command is not forwarded on from the target to a third logic.
+Forwarding only operates between logics that are members of a common,
+currently activated link, and not to a target that is offline.
+.br
+On the target, commands put together from forwarded digits only operate the
+forwarded module. Core commands, macros and commands for any other module
+dialled through a session are ignored.
 .TP
 .B ONLINE_CMD
 Define a DTMF command that is used to switch the node between online and

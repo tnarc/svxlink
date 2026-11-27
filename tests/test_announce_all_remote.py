@@ -161,10 +161,25 @@ def test_dtmf_activation_still_broadcast():
         h.cleanup()
 
 
+def test_dtmf_deactivation_still_broadcast():
+    """'#' makes the module deactivate itself (deactivateMe), but on a user's
+    command, so it is broadcast like the activation."""
+    h = _make_harness()
+    try:
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", "2#"), window=5.0)
+        c = h.count_tx_after(lambda: h.send_dtmf("Logic1", "#"), window=5.0)
+        _assert(c["Logic2"] > 0 and c["Logic3"] > 0,
+                f"a DTMF deactivation was not broadcast: {c}")
+    finally:
+        h.stop()
+        h.cleanup()
+
+
 TESTS = [
     test_remote_activation_not_broadcast_by_default,
     test_remote_activation_broadcast_when_enabled,
     test_dtmf_activation_still_broadcast,
+    test_dtmf_deactivation_still_broadcast,
 ]
 
 
