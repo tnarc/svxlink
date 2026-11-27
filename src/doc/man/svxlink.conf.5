@@ -1202,6 +1202,30 @@ priority sources transmit simultaneously, they are mixed together.
 .IP
 Example: AUDIO_MODE=PRIORITY
 .IP
+A connection between two logics may be created by more than one activated
+link. That is the case when both logics are members of several activated
+links, and when the connection only exists because activated links are chained
+via a common logic (e.g. when LinkA connects LogicA and LogicB and LinkB
+connects LogicB and LogicC, LogicA and LogicC are connected as well). The
+strongest audio mode of the links that create the connection is then used, in
+the order PRIORITY, DUCK, MIX, FIRST. If both logics are members of one or
+more activated links, only those links create the connection. Otherwise it is
+created by every activated link that the audio can pass through on its way
+from one of the logics to the other, without passing the same logic twice. A
+link that only hangs off one of the logics on the way does not count. The
+mode is evaluated again whenever a link is activated or deactivated or a logic
+is muted (e.g. by a module) in the linking layer. Earlier versions always used
+FIRST for a connection that only existed via chained links.
+.IP
+DUCK_LEVEL_DB for a connection is taken from the link whose mode is used. If
+more than one link with that mode creates the connection, the one given first
+in GLOBAL/LINKS is used. A logic pre-empts the audio into the other logic of a
+connection if it is a priority source (see PRIORITY_SOURCES) of one of the
+PRIORITY links that create the connection, so priority traffic also pre-empts
+the audio into logics that are reached via chained links. The first such
+PRIORITY link in GLOBAL/LINKS decides PRIORITY_MUTE_DB and PRIORITY_HANGTIME
+for the pre-empted logic.
+.IP
 DUCK and PRIORITY both key off a member logic's local squelch state (whether
 it is currently receiving traffic). This is only reported by logic cores
 of TYPE=Simplex or TYPE=Repeater. A logic of any other type (e.g.

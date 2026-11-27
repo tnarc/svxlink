@@ -190,6 +190,34 @@ def test_priority_sources_hub_traffic_does_not_preempt():
             f"measured {_db(during / before):.1f} dB")
 
 
+def test_priority_preempts_via_chained_link():
+    """A priority source also pre-empts the audio into a logic it only
+    reaches via a MIX link chained to the PRIORITY link (Logic1 -> hub Logic2
+    -> Logic3). The connection takes the strongest mode of the links that
+    create it."""
+    import time
+    links = [
+        LinkSpec("Pri", ["Logic1", "Logic2"], prefix="91", default_active=True,
+                 audio_mode="PRIORITY", priority_mute_db=-20),
+        LinkSpec("Norm", ["Logic2", "Logic3"], prefix="92", default_active=True,
+                 audio_mode="MIX"),
+    ]
+    with _harness(links) as h:
+        h.start_talk("Logic2", F2)               # normal traffic on the hub
+        time.sleep(1.0)
+        before = h.tone_level("Logic3", F2)
+        h.start_talk("Logic1", F1)               # priority source keys up
+        time.sleep(1.0)
+        muted = h.tone_level("Logic3", F2)
+        pri = h.tone_level("Logic3", F1)
+        _assert(before > 800, f"normal traffic should be full, got {before:.0f}")
+        _assert(pri > 500, f"priority source should be audible, got {pri:.0f}")
+        reduction = _db(muted / before)
+        _assert(-26 < reduction < -14,
+                f"chained PRIORITY should mute normal by ~-20 dB, measured "
+                f"{reduction:.1f} dB")
+
+
 def _close_squelch(h, logic, freq, timeout=8.0):
     """Drive the logic's VOX squelch closed by streaming near-silence until the
     log reports the close (a Local UDP RX never re-evaluates VOX to silence
@@ -258,6 +286,7 @@ TESTS = [
     test_priority_mutes_nonpriority_sources,
     test_priority_with_hangtime_still_preempts,
     test_priority_sources_hub_traffic_does_not_preempt,
+    test_priority_preempts_via_chained_link,
 ]
 
 

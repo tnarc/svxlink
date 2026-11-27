@@ -121,6 +121,93 @@ namespace
  *
  ****************************************************************************/
 
+  // The strength of an audio mode when several links create the same
+  // connection. The strongest mode wins.
+int modeStrength(LinkAudioMode mode)
+{
+  switch (mode)
+  {
+    case LinkAudioMode::PRIORITY: return 3;
+    case LinkAudioMode::DUCK:     return 2;
+    case LinkAudioMode::MIX:      return 1;
+    case LinkAudioMode::FIRST:    break;
+  }
+  return 0;
+} /* modeStrength */
+
+
+/**
+ * @brief Find the blocks of an undirected graph
+ *
+ * A block is a maximal biconnected subgraph (a single edge that is a bridge
+ * is a block too). Every edge belongs to exactly one block. For two vertices
+ * in a block and any edge of that block, there is a simple path between the
+ * two vertices that passes the edge.
+ */
+class BlockFinder
+{
+  public:
+    typedef std::map<std::string, std::set<std::string>> Graph;
+    typedef std::pair<std::string, std::string> Edge;
+
+    explicit BlockFinder(const Graph& graph) : m_graph(graph)
+    {
+      for (const auto& node : m_graph)
+      {
+        if (m_disc.count(node.first) == 0)
+        {
+          dfs(node.first, std::string());
+        }
+      }
+    }
+
+    const std::vector<std::vector<Edge>>& blocks(void) const
+    {
+      return m_blocks;
+    }
+
+  private:
+    const Graph&                    m_graph;
+    std::map<std::string, int>      m_disc;
+    std::map<std::string, int>      m_low;
+    int                             m_time = 0;
+    std::vector<Edge>               m_stack;
+    std::vector<std::vector<Edge>>  m_blocks;
+
+      // Tarjan's algorithm. The recursion depth is bounded by the number of
+      // logics, which is small.
+    void dfs(const std::string& u, const std::string& parent)
+    {
+      m_disc[u] = m_low[u] = ++m_time;
+      for (const auto& v : m_graph.at(u))
+      {
+        if (m_disc.count(v) == 0)
+        {
+          m_stack.push_back(Edge(u, v));
+          dfs(v, u);
+          m_low[u] = std::min(m_low[u], m_low[v]);
+          if (m_low[v] >= m_disc[u])
+          {
+            std::vector<Edge> block;
+            Edge e;
+            do
+            {
+              e = m_stack.back();
+              m_stack.pop_back();
+              block.push_back(e);
+            } while (e != Edge(u, v));
+            m_blocks.push_back(block);
+          }
+        }
+        else if ((v != parent) && (m_disc[v] < m_disc[u]))
+        {
+          m_stack.push_back(Edge(u, v));
+          m_low[u] = std::min(m_low[u], m_disc[v]);
+        }
+      }
+    }
+};
+
 
 } // End of anonymous namespace
 
@@ -227,6 +314,7 @@ bool LinkManager::initialize(Async::Config &cfg,
 
       // The link name is the same as the config section name
     link.name = *name_it;
+    LinkManager::instance()->link_order.push_back(&link);
 
       // Logic1:70:name1,Logic2:71:name2,...
     string connect_logics;
@@ -1423,12 +1511,17 @@ void LinkManager::updateConnections(void)
     current_cons.insert(*it);
   }
 
+    // The set of activated links has changed, so find out which links create
+    // each connection. That decides the audio mode of the connection.
+  updateConnectionLinks();
+
     // Reconcile the effective audio mode for EVERY established connection, not
     // just the ones added above. Two overlapping links can change the effective
     // mode of a connection that stays wanted (e.g. activating a MIX link over a
-    // FIRST link) without adding or removing it from current_cons, so the
-    // selector/valve path has to be recomputed here as well. All of the
-    // operations below are idempotent.
+    // FIRST link, or a link that chains a PRIORITY link to the connection)
+    // without adding or removing it from current_cons, so the selector/valve
+    // path has to be recomputed here as well. All of the operations below are
+    // idempotent.
   for (const auto &con : current_cons)
   {
     const string &src_name = con.first;
@@ -1753,44 +1846,198 @@ void LinkManager::onPublishStateEvent(LogicBase *src_logic,
 } /* LinkManager::onPublishStateEvent */
 
 
-LinkAudioMode LinkManager::getEffectiveMode(const std::string& src_name,
-                                             const std::string& sink_name)
+void LinkManager::updateConnectionLinks(void)
 {
-    // Determine the effective audio mode for a connection.
-    // DUCK takes precedence over MIX, and both use the mixer path.
-  LinkAudioMode mode = LinkAudioMode::FIRST;
+    // Find out which activated links create each established connection. A
+    // connection between two logics that are both members of one or more
+    // activated links is created by those links. Otherwise, the connection
+    // only exists because activated links are chained via common logics
+    // (e.g. A-B in one link and B-C in another one creates A-C). It is then
+    // created by every link that the audio can pass through on its way from
+    // the source to the sink, that is the links that join two logics on some
+    // path from the source to the sink that does not visit any logic twice.
+  con_links.clear();
 
-  for (const auto& link_pair : links)
+    // The graph of direct connections between unmuted logics, as set up by
+    // wantedConnections
+  BlockFinder::Graph graph;
+  for (const Link* link : link_order)
   {
-    const Link& link = link_pair.second;
-    if (!link.is_activated)
+    if (!link->is_activated)
+    {
+      continue;
+    }
+    for (const auto& l1 : link->logic_props)
+    {
+      for (const auto& l2 : link->logic_props)
+      {
+        if ((l1.first != l2.first) && !logic_map.at(l1.first).is_muted &&
+            !logic_map.at(l2.first).is_muted)
+        {
+          graph[l1.first].insert(l2.first);
+        }
+      }
+    }
+  }
+
+    // The edges on the simple paths between two vertices are exactly the
+    // edges of the blocks on the path between the two vertices in the tree
+    // formed by the blocks and the vertices they contain. Set up that tree.
+  BlockFinder finder(graph);
+  const auto& blocks = finder.blocks();
+  std::map<std::string, std::vector<size_t>> vertex_blocks;
+  std::vector<std::set<std::string>> block_vertices(blocks.size());
+  for (size_t i = 0; i < blocks.size(); ++i)
+  {
+    for (const auto& edge : blocks[i])
+    {
+      block_vertices[i].insert(edge.first);
+      block_vertices[i].insert(edge.second);
+    }
+    for (const auto& vertex : block_vertices[i])
+    {
+      vertex_blocks[vertex].push_back(i);
+    }
+  }
+
+  for (const auto& con : current_cons)
+  {
+    const std::string& src_name = con.first;
+    const std::string& sink_name = con.second;
+    LinkPtrVec& con_link_vec = con_links[con];
+
+    for (const Link* link : link_order)
+    {
+      if (link->is_activated && (link->logic_props.count(src_name) > 0) &&
+          (link->logic_props.count(sink_name) > 0))
+      {
+        con_link_vec.push_back(link);
+      }
+    }
+    if (!con_link_vec.empty() || (vertex_blocks.count(src_name) == 0))
     {
       continue;
     }
 
-    bool has_src = link.logic_props.count(src_name) > 0;
-    bool has_sink = link.logic_props.count(sink_name) > 0;
-
-    if (has_src && has_sink)
+      // An implicit connection. Search the tree from the source to the sink,
+      // remembering how each block was reached.
+    std::map<size_t, std::string> block_from;
+    std::map<std::string, size_t> vertex_from;
+    std::vector<std::string> queue(1, src_name);
+    vertex_from[src_name] = blocks.size();
+    for (size_t qi = 0; (qi < queue.size()) &&
+                        (vertex_from.count(sink_name) == 0); ++qi)
     {
-        // PRIORITY takes highest precedence, then DUCK, then MIX
-      if (link.audio_mode == LinkAudioMode::PRIORITY)
+      const std::string vertex = queue[qi];
+      for (size_t block : vertex_blocks[vertex])
       {
-        return LinkAudioMode::PRIORITY;
+        if (block_from.count(block) > 0)
+        {
+          continue;
+        }
+        block_from[block] = vertex;
+        for (const auto& next : block_vertices[block])
+        {
+          if (vertex_from.count(next) == 0)
+          {
+            vertex_from[next] = block;
+            queue.push_back(next);
+          }
+        }
       }
-      else if (link.audio_mode == LinkAudioMode::DUCK &&
-               mode != LinkAudioMode::PRIORITY)
+    }
+    if (vertex_from.count(sink_name) == 0)
+    {
+      continue;
+    }
+    std::set<LogicCon> path_edges;
+    std::string vertex = sink_name;
+    while (vertex != src_name)
+    {
+      size_t block = vertex_from[vertex];
+      for (const auto& edge : blocks[block])
       {
-        mode = LinkAudioMode::DUCK;
+        path_edges.insert(edge);
       }
-      else if (link.audio_mode == LinkAudioMode::MIX &&
-               mode != LinkAudioMode::PRIORITY && mode != LinkAudioMode::DUCK)
+      vertex = block_from[block];
+    }
+    for (const Link* link : link_order)
+    {
+      if (!link->is_activated)
       {
-        mode = LinkAudioMode::MIX;
+        continue;
+      }
+      for (const auto& edge : path_edges)
+      {
+        if ((link->logic_props.count(edge.first) > 0) &&
+            (link->logic_props.count(edge.second) > 0))
+        {
+          con_link_vec.push_back(link);
+          break;
+        }
       }
     }
   }
-  return mode;
+} /* LinkManager::updateConnectionLinks */
+
+
+const LinkManager::LinkPtrVec& LinkManager::connectionLinks(
+    const std::string& src_name, const std::string& sink_name) const
+{
+  static const LinkPtrVec no_links;
+  ConLinkMap::const_iterator it =
+    con_links.find(std::make_pair(src_name, sink_name));
+  if (it == con_links.end())
+  {
+    return no_links;
+  }
+  return it->second;
+} /* LinkManager::connectionLinks */
+
+
+const LinkManager::Link* LinkManager::modeLink(
+    const std::string& src_name, const std::string& sink_name) const
+{
+    // The link that decides the audio mode of a connection, and the DUCK
+    // parameters for it, is the one with the strongest mode of the links
+    // that create the connection: PRIORITY > DUCK > MIX > FIRST. Among
+    // links with the same mode, the one given first in GLOBAL/LINKS wins.
+  const Link* mode_link = nullptr;
+  for (const Link* link : connectionLinks(src_name, sink_name))
+  {
+    if ((mode_link == nullptr) ||
+        (modeStrength(link->audio_mode) > modeStrength(mode_link->audio_mode)))
+    {
+      mode_link = link;
+    }
+  }
+  return mode_link;
+} /* LinkManager::modeLink */
+
+
+const LinkManager::Link* LinkManager::priorityLink(
+    const std::string& src_name, const std::string& sink_name) const
+{
+    // The PRIORITY link that makes the source pre-empt other audio into the
+    // sink: the first one, in GLOBAL/LINKS order, of the PRIORITY links that
+    // create the connection and have the source as a priority source
+  for (const Link* link : connectionLinks(src_name, sink_name))
+  {
+    if ((link->audio_mode == LinkAudioMode::PRIORITY) &&
+        link->isPrioritySource(src_name))
+    {
+      return link;
+    }
+  }
+  return nullptr;
+} /* LinkManager::priorityLink */
+
+
+LinkAudioMode LinkManager::getEffectiveMode(const std::string& src_name,
+                                             const std::string& sink_name)
+{
+  const Link* link = modeLink(src_name, sink_name);
+  return (link != nullptr) ? link->audio_mode : LinkAudioMode::FIRST;
 } /* LinkManager::getEffectiveMode */
 
 
@@ -1939,23 +2186,13 @@ void LinkManager::updateDuckingForSink(const std::string& sink_name,
 float LinkManager::getEffectiveDuckLevel(const std::string& src_name,
                                           const std::string& sink_name)
 {
-  float duck_level = -12.0f;  // Default
-
-  for (const auto& link_pair : links)
+    // Use the DUCK_LEVEL_DB of the link that decided the mode
+  const Link* link = modeLink(src_name, sink_name);
+  if ((link != nullptr) && (link->audio_mode == LinkAudioMode::DUCK))
   {
-    const Link& link = link_pair.second;
-    if (!link.is_activated) continue;
-
-    bool has_src = link.logic_props.count(src_name) > 0;
-    bool has_sink = link.logic_props.count(sink_name) > 0;
-
-    if (has_src && has_sink && link.audio_mode == LinkAudioMode::DUCK)
-    {
-      duck_level = link.duck_level_db;
-      break;
-    }
+    return link->duck_level_db;
   }
-  return duck_level;
+  return -12.0f;  // Default
 } /* LinkManager::getEffectiveDuckLevel */
 
 
@@ -1963,20 +2200,8 @@ bool LinkManager::isSourceFromPriorityLink(const std::string& src_name,
                                             const std::string& sink_name)
 {
     // Check if this source is a priority source (PRIORITY_SOURCES) of an
-    // activated PRIORITY link that also includes the sink
-  for (const auto& link_pair : links)
-  {
-    const Link& link = link_pair.second;
-    if (!link.is_activated) continue;
-    if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
-
-    if (link.isPrioritySource(src_name) &&
-        link.logic_props.count(sink_name) > 0)
-    {
-      return true;
-    }
-  }
-  return false;
+    // activated PRIORITY link that creates the connection to the sink
+  return priorityLink(src_name, sink_name) != nullptr;
 } /* LinkManager::isSourceFromPriorityLink */
 
 
@@ -2008,19 +2233,36 @@ bool LinkManager::isPrioritySourceActive(const std::string& sink_name)
 } /* LinkManager::isPrioritySourceActive */
 
 
-float LinkManager::getEffectivePriorityMuteLevel(const std::string& src_name,
-                                                  const std::string& sink_name)
+float LinkManager::getEffectivePriorityMuteLevel(const std::string& sink_name)
 {
-  for (const auto& link_pair : links)
+    // Use the PRIORITY_MUTE_DB of the PRIORITY link that pre-empts the audio
+    // into this sink, either because one of its priority sources is
+    // transmitting into the sink or because its hangtime is running for the
+    // sink. If more than one link does, the first one in GLOBAL/LINKS wins.
+  for (const Link* link : link_order)
   {
-    const Link& link = link_pair.second;
-    if (!link.is_activated) continue;
-
-      // Find any PRIORITY link that includes this sink
-    if (link.audio_mode == LinkAudioMode::PRIORITY &&
-        link.logic_props.count(sink_name) > 0)
+    if (!link->is_activated || (link->audio_mode != LinkAudioMode::PRIORITY))
     {
-      return link.priority_mute_db;
+      continue;
+    }
+    if ((link->priority_hangtime_timer != nullptr) &&
+        link->priority_hangtime_timer->isEnabled() &&
+        (link->priority_active_sinks.count(sink_name) > 0))
+    {
+      return link->priority_mute_db;
+    }
+    for (const auto& con : current_cons)
+    {
+      if (con.second != sink_name)
+      {
+        continue;
+      }
+      LogicMap::const_iterator it = logic_map.find(con.first);
+      if ((it != logic_map.end()) && it->second.squelch_open &&
+          (priorityLink(con.first, sink_name) == link))
+      {
+        return link->priority_mute_db;
+      }
     }
   }
   return -60.0f;
@@ -2095,7 +2337,7 @@ void LinkManager::updatePriorityForSink(const std::string& sink_name)
       if (priority_active && !is_priority_src)
       {
           // A PRIORITY source is active and this is NOT a priority source - mute it
-        float mute_level = getEffectivePriorityMuteLevel(src_name, sink_name);
+        float mute_level = getEffectivePriorityMuteLevel(sink_name);
         amp->setGain(mute_level);
       }
       else
@@ -2110,14 +2352,15 @@ void LinkManager::updatePriorityForSink(const std::string& sink_name)
 
 bool LinkManager::isPriorityHangtimeActive(const std::string& sink_name)
 {
-    // Check if any PRIORITY link that includes this sink has an active
-    // hangtime timer
+    // Check if any PRIORITY link has an active hangtime timer for this sink.
+    // The sink does not have to be a member of the link, since a priority
+    // source also reaches the logics that are linked to a member via other
+    // links.
   for (const auto& link_pair : links)
   {
     const Link& link = link_pair.second;
     if (!link.is_activated) continue;
     if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
-    if (link.logic_props.count(sink_name) == 0) continue;
 
       // Hangtime only mutes the sinks that were actually being preempted by a
       // priority source when it unkeyed. A member whose only activity was its
@@ -2145,35 +2388,25 @@ void LinkManager::checkPriorityHangtime(void)
     if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
     if (link.priority_hangtime_timer == nullptr) continue;
 
-      // Determine, per member acting as a sink, whether a priority source is
-      // currently transmitting INTO it. This mirrors isPrioritySourceActive:
-      // a member's own open squelch never counts as priority activity for
-      // itself (a sink has no amp for its own audio); it only counts as a
-      // priority source into the OTHER members of the link. Ordinary local
-      // traffic on a member therefore never arms hangtime muting of that
-      // member's own incoming audio.
+      // Determine the sinks that a priority source of this link is currently
+      // transmitting INTO. Only established connections count, and only
+      // the ones for which this link makes the source a priority source
+      // (see priorityLink), so a member that is not a priority source
+      // (PRIORITY_SOURCES) never arms the hangtime. A member's own open
+      // squelch never counts as priority activity for itself (a logic is
+      // never connected to itself); it only counts as a priority source into
+      // the OTHER logics. Ordinary local traffic on a member therefore never
+      // arms hangtime muting of that member's own incoming audio.
     std::set<std::string> active_sinks;
-    for (const auto& sink_prop : link.logic_props)
+    for (const auto& con : current_cons)
     {
-      const std::string& sink_name = sink_prop.first;
-      for (const auto& src_prop : link.logic_props)
+      const std::string& src_name = con.first;
+      const std::string& sink_name = con.second;
+      LogicMap::iterator it = logic_map.find(src_name);
+      if ((it != logic_map.end()) && it->second.squelch_open &&
+          (priorityLink(src_name, sink_name) == &link))
       {
-        const std::string& src_name = src_prop.first;
-        if (src_name == sink_name) continue;
-          // Only the traffic of a priority source arms the hangtime
-        if (!link.isPrioritySource(src_name)) continue;
-          // Same rule as in isPrioritySourceActive: only a source with an
-          // established connection into the sink counts
-        if (current_cons.count(std::make_pair(src_name, sink_name)) == 0)
-        {
-          continue;
-        }
-        LogicMap::iterator it = logic_map.find(src_name);
-        if (it != logic_map.end() && it->second.squelch_open)
-        {
-          active_sinks.insert(sink_name);
-          break;
-        }
+        active_sinks.insert(sink_name);
       }
     }
 

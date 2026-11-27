@@ -498,7 +498,10 @@ class LinkManager : public sigc::trackable
       }
     };
     typedef std::map<std::string, Link> LinkMap;
-    typedef std::set<std::pair<std::string, std::string> > LogicConSet;
+    typedef std::pair<std::string, std::string> LogicCon;
+    typedef std::set<LogicCon> LogicConSet;
+    typedef std::vector<const Link*> LinkPtrVec;
+    typedef std::map<LogicCon, LinkPtrVec> ConLinkMap;
     struct SourceInfo
     {
       Async::AudioSource      *source;
@@ -546,8 +549,15 @@ class LinkManager : public sigc::trackable
     static LinkManager *_instance;
 
     LinkMap     links;
+      // The links in the order they are given in GLOBAL/LINKS. Used whenever
+      // one of several links has to be chosen, so that the choice does not
+      // depend on the names of the links.
+    std::vector<Link*> link_order;
     LogicMap    logic_map;
     LogicConSet current_cons;
+      // For each established connection, the activated links that create it,
+      // in link_order. Rebuilt by updateConnections.
+    ConLinkMap  con_links;
     SourceMap   sources;
     SinkMap     sinks;
     bool        all_logics_started;
@@ -575,6 +585,13 @@ class LinkManager : public sigc::trackable
     void onReceivedTgUpdated(LogicBase *src_logic, uint32_t tg);
     void onPublishStateEvent(LogicBase *src_logic,
         const std::string& event_name, const std::string& msg);
+    void updateConnectionLinks(void);
+    const LinkPtrVec& connectionLinks(const std::string& src_name,
+                                      const std::string& sink_name) const;
+    const Link* modeLink(const std::string& src_name,
+                         const std::string& sink_name) const;
+    const Link* priorityLink(const std::string& src_name,
+                             const std::string& sink_name) const;
     LinkAudioMode getEffectiveMode(const std::string& src_name,
                                    const std::string& sink_name);
     void updateMixerRouting(void);
@@ -585,8 +602,7 @@ class LinkManager : public sigc::trackable
     void updatePriorityForSink(const std::string& sink_name);
     bool isPrioritySourceActive(const std::string& sink_name);
     bool isPriorityHangtimeActive(const std::string& sink_name);
-    float getEffectivePriorityMuteLevel(const std::string& src_name,
-                                        const std::string& sink_name);
+    float getEffectivePriorityMuteLevel(const std::string& sink_name);
     bool isSourceFromPriorityLink(const std::string& src_name,
                                   const std::string& sink_name);
     void checkPriorityHangtime(void);

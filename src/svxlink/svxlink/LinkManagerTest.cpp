@@ -111,17 +111,22 @@ class FakeLogic : public LogicBase
 
 
 /**
- * @brief Build a LinkManager with three logics and the given link sections.
+ * @brief Build a LinkManager with the given number of logics and links.
  *
- * Logics are named Logic1..Logic3. The caller owns the returned logics and
+ * Logics are named Logic1..LogicN. The caller owns the returned logics and
  * must delete them AFTER LinkManager::deleteInstance().
  */
-void buildLinks(Config& cfg, const string& links, FakeLogic* logics[3])
+void buildLinksN(Config& cfg, const string& links, FakeLogic* logics[],
+                 int count)
 {
-  const char* names[3] = {"Logic1", "Logic2", "Logic3"};
+  vector<string> names;
+  for (int i = 0; i < count; ++i)
+  {
+    names.push_back("Logic" + to_string(i + 1));
+  }
     // Unless a test says otherwise, the logics stand in for Simplex logics
     // as far as the link configuration checks are concerned
-  for (int i = 0; i < 3; ++i)
+  for (int i = 0; i < count; ++i)
   {
     string type;
     if (!cfg.getValue(names[i], "TYPE", type))
@@ -130,7 +135,7 @@ void buildLinks(Config& cfg, const string& links, FakeLogic* logics[3])
     }
   }
   LinkManager::initialize(cfg, links);
-  for (int i = 0; i < 3; ++i)
+  for (int i = 0; i < count; ++i)
   {
     cfg.setValue(names[i], "TYPE", string("Test"));
     logics[i] = new FakeLogic;
@@ -139,14 +144,27 @@ void buildLinks(Config& cfg, const string& links, FakeLogic* logics[3])
   LinkManager::instance()->allLogicsStarted();
 }
 
-void teardown(FakeLogic* logics[3])
+void teardownN(FakeLogic* logics[], int count)
 {
   LinkManager::deleteInstance();
-  for (int i = 0; i < 3; ++i)
+  for (int i = 0; i < count; ++i)
   {
     delete logics[i];
     logics[i] = nullptr;
   }
+}
+
+/**
+ * @brief Build a LinkManager with three logics and the given link sections.
+ */
+void buildLinks(Config& cfg, const string& links, FakeLogic* logics[3])
+{
+  buildLinksN(cfg, links, logics, 3);
+}
+
+void teardown(FakeLogic* logics[3])
+{
+  teardownN(logics, 3);
 }
 
 
@@ -608,16 +626,20 @@ void test_priority_sources_only_listed_preempt(void)
     buildLinks(cfg, "Pri,Norm", lg);
     LinkManager* lm = LinkManager::instance();
 
-    check(lm->linkSelectorEnabled("Logic2", "Logic1"),
+      // The Logic2->Logic1 connection only exists via the hub. It is
+      // created by both links, so it is a PRIORITY (mixer) connection.
+    const float preempted = listed ? 0.0f : -30.0f;
+    check(lm->linkValveOpen("Logic2", "Logic1") &&
+          near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
           tag + "Logic2 reaches Logic1 before any traffic");
 
       // Ordinary traffic on the hub
     lg[2]->squelchStateChanged(true);
-    check(lm->linkSelectorEnabled("Logic2", "Logic1") == bool(listed),
+    check(near_db(lm->linkGain("Logic2", "Logic1"), preempted),
           tag + (listed ? "hub traffic does not pre-empt Logic2 into Logic1"
                         : "hub traffic pre-empts Logic2 into Logic1"));
     lg[2]->squelchStateChanged(false);
-    check(lm->linkSelectorEnabled("Logic2", "Logic1") == bool(listed),
+    check(near_db(lm->linkGain("Logic2", "Logic1"), preempted),
           tag + (listed ? "no hangtime after the hub unkeys"
                         : "hangtime after the hub unkeys"));
     lm->deactivateLinkByName("Pri");    // Reset any hangtime state
@@ -1041,6 +1063,238 @@ void test_overlapping_activation_reconciles_mode(void)
   teardown(lg);
 }
 
+// A connection that only exists because activated links are chained via a
+// common logic takes the strongest mode of those links (PRIORITY > DUCK > MIX
+// > FIRST), re-evaluated whenever a link is activated or deactivated.
+void test_implicit_connection_takes_strongest_mode(void)
+{
+  cout << "test_implicit_connection_takes_strongest_mode" << endl;
+  Config cfg;
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("M", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("M", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("M", "DEFAULT_ACTIVE", string("0"));
+  cfg.setValue("D", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("D", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("D", "DUCK_LEVEL_DB", string("-15"));
+  cfg.setValue("D", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "A,B,M,D", lg);
+  LinkManager* lm = LinkManager::instance();
+
+  check(lm->linkSelectorEnabled("Logic1", "Logic3") &&
+        !lm->linkValveOpen("Logic1", "Logic3"),
+        "FIRST+FIRST chain: the implicit connection is FIRST");
+
+  lm->activateLinkByName("M");
+  check(lm->linkValveOpen("Logic1", "Logic3") &&
+        !lm->linkSelectorEnabled("Logic1", "Logic3") &&
+        lm->linkValveOpen("Logic3", "Logic1"),
+        "a MIX link in the chain makes the implicit connection MIX");
+  check(!lm->linkValveOpen("Logic2", "Logic1"),
+        "a direct connection is not affected by links chained to it");
+
+  lm->activateLinkByName("D");
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), -15.0f),
+        "a DUCK link in the chain wins over MIX, with its DUCK_LEVEL_DB");
+  lg[2]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f),
+        "the implicit DUCK connection is restored when the squelch closes");
+
+  lm->deactivateLinkByName("D");
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f) &&
+        lm->linkValveOpen("Logic1", "Logic3"),
+        "MIX again once the DUCK link is deactivated");
+  lg[2]->squelchStateChanged(false);
+
+  lm->deactivateLinkByName("M");
+  check(lm->linkSelectorEnabled("Logic1", "Logic3") &&
+        !lm->linkValveOpen("Logic1", "Logic3"),
+        "FIRST again once the MIX link is deactivated");
+  teardown(lg);
+}
+
+// A priority source also pre-empts the audio into logics that it only reaches
+// via a link chained to the PRIORITY link, with that link's PRIORITY_MUTE_DB
+// and PRIORITY_HANGTIME. A member that is only reached that way is not a
+// priority source.
+void test_implicit_priority_connection_preempts(void)
+{
+  cout << "test_implicit_priority_connection_preempts" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Pri,Norm", lg);
+  LinkManager* lm = LinkManager::instance();
+
+    // Logic3 receives Logic1 via the hub Logic2, and Logic2 directly
+  check(lm->linkValveOpen("Logic1", "Logic3"),
+        "the implicit Logic1->Logic3 connection is a PRIORITY connection");
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "the priority source pre-empts audio into the chained logic");
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f),
+        "the priority source itself is not muted");
+  lg[0]->squelchStateChanged(false);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+        "the hangtime covers the chained logic");
+  lm->deactivateLinkByName("Pri");
+  lm->activateLinkByName("Pri");
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "the hangtime is reset when the PRIORITY link is deactivated");
+
+    // Logic3 is not a member of the PRIORITY link, so it does not pre-empt
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "a logic reached via a chained link is not a priority source");
+  lg[2]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// When several links with the same mode create a connection, the parameters
+// (DUCK_LEVEL_DB, PRIORITY_MUTE_DB) come from the one given first in
+// GLOBAL/LINKS, whatever the names of the links are. A stronger mode wins over
+// the order.
+void test_overlapping_links_parameters_follow_links_order(void)
+{
+  cout << "test_overlapping_links_parameters_follow_links_order" << endl;
+  for (int zed_first = 0; zed_first < 2; ++zed_first)
+  {
+    Config cfg;
+    cfg.setValue("Zed", "CONNECT_LOGICS", string("Logic1,Logic2"));
+    cfg.setValue("Zed", "AUDIO_MODE", string("DUCK"));
+    cfg.setValue("Zed", "DUCK_LEVEL_DB", string("-20"));
+    cfg.setValue("Zed", "DEFAULT_ACTIVE", string("1"));
+    cfg.setValue("Abe", "CONNECT_LOGICS", string("Logic1,Logic2"));
+    cfg.setValue("Abe", "AUDIO_MODE", string("DUCK"));
+    cfg.setValue("Abe", "DUCK_LEVEL_DB", string("-10"));
+    cfg.setValue("Abe", "DEFAULT_ACTIVE", string("1"));
+    cfg.setValue("Zpri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+    cfg.setValue("Zpri", "AUDIO_MODE", string("PRIORITY"));
+    cfg.setValue("Zpri", "PRIORITY_MUTE_DB", string("-40"));
+    cfg.setValue("Zpri", "DEFAULT_ACTIVE", string("1"));
+    cfg.setValue("Apri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+    cfg.setValue("Apri", "AUDIO_MODE", string("PRIORITY"));
+    cfg.setValue("Apri", "PRIORITY_MUTE_DB", string("-25"));
+    cfg.setValue("Apri", "DEFAULT_ACTIVE", string("1"));
+    cfg.setValue("Mix", "CONNECT_LOGICS", string("Logic2,Logic3"));
+    cfg.setValue("Mix", "AUDIO_MODE", string("MIX"));
+    cfg.setValue("Mix", "DEFAULT_ACTIVE", string("1"));
+    FakeLogic* lg[3];
+    buildLinks(cfg, zed_first ? "Zed,Abe,Zpri,Apri,Mix"
+                              : "Abe,Zed,Apri,Zpri,Mix", lg);
+    LinkManager* lm = LinkManager::instance();
+    const string tag(zed_first ? "Zed first: " : "Abe first: ");
+
+    lg[0]->squelchStateChanged(true);
+    check(near_db(lm->linkGain("Logic2", "Logic1"),
+                  zed_first ? -20.0f : -10.0f),
+          tag + "DUCK_LEVEL_DB of the first DUCK link in LINKS is used");
+    check(near_db(lm->linkGain("Logic2", "Logic3"),
+                  zed_first ? -40.0f : -25.0f),
+          tag + "PRIORITY_MUTE_DB of the first PRIORITY link in LINKS is "
+                "used");
+    lg[0]->squelchStateChanged(false);
+
+      // Logic2 reaches Logic1 directly via the DUCK links, and also via
+      // Logic3. The direct links decide the mode of a direct connection.
+    lg[0]->squelchStateChanged(true);
+    check(lm->linkValveOpen("Logic2", "Logic1") &&
+          (lm->linkGain("Logic2", "Logic1") < -5.0f),
+          tag + "the direct DUCK links decide the mode, not the chain via "
+                "the PRIORITY links");
+    lg[0]->squelchStateChanged(false);
+    teardown(lg);
+  }
+
+    // PRIORITY wins over DUCK on the same pair, whatever the order
+  Config cfg;
+  cfg.setValue("Duck", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("Duck", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("Duck", "DUCK_LEVEL_DB", string("-20"));
+  cfg.setValue("Duck", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  buildLinks(cfg, "Duck,Pri", lg);
+  LinkManager* lm = LinkManager::instance();
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic1"), 0.0f),
+        "PRIORITY wins over an earlier DUCK link: no ducking");
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// The links that create an implicit connection are the ones the audio can
+// pass through on its way from the source to the sink. A link that only
+// hangs off a logic on the way does not count.
+void test_implicit_connection_ignores_links_off_the_path(void)
+{
+  cout << "test_implicit_connection_ignores_links_off_the_path" << endl;
+  Config cfg;
+  cfg.setValue("A", "CONNECT_LOGICS", string("Logic1,Logic2"));
+  cfg.setValue("A", "AUDIO_MODE", string("DUCK"));
+  cfg.setValue("A", "DUCK_LEVEL_DB", string("-15"));
+  cfg.setValue("A", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("B", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("B", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("B", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("C", "CONNECT_LOGICS", string("Logic2,Logic4"));
+  cfg.setValue("C", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("C", "DEFAULT_ACTIVE", string("1"));
+    // A loop: Logic3-Logic5-Logic4 joins the B and C branches
+  cfg.setValue("E", "CONNECT_LOGICS", string("Logic3,Logic5"));
+  cfg.setValue("E", "DEFAULT_ACTIVE", string("0"));
+  cfg.setValue("F", "CONNECT_LOGICS", string("Logic5,Logic4"));
+  cfg.setValue("F", "DEFAULT_ACTIVE", string("0"));
+  FakeLogic* lg[5];
+  buildLinksN(cfg, "A,B,C,E,F", lg, 5);
+  LinkManager* lm = LinkManager::instance();
+
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), -15.0f),
+        "Logic1->Logic3 is DUCK (A, B), the PRIORITY link C is off the path");
+  lg[2]->squelchStateChanged(false);
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f) &&
+        near_db(lm->linkGain("Logic3", "Logic1"), -15.0f),
+        "Logic1 is not a priority source into Logic3");
+  lg[0]->squelchStateChanged(false);
+  check(lm->linkValveOpen("Logic1", "Logic4"),
+        "Logic1->Logic4 passes the PRIORITY link C");
+
+    // With the loop, the audio from Logic1 can reach Logic3 via C as well
+  lm->activateLinkByName("E");
+  lm->activateLinkByName("F");
+  lg[2]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic1", "Logic3"), 0.0f),
+        "with the loop, Logic1->Logic3 passes C and becomes PRIORITY");
+  lg[2]->squelchStateChanged(false);
+    // Only a member of the PRIORITY link can be a priority source
+  lg[0]->squelchStateChanged(true);
+  check(lm->linkSelectorEnabled("Logic5", "Logic3"),
+        "with the loop, Logic1 is still not a priority source");
+  lg[0]->squelchStateChanged(false);
+  lg[3]->squelchStateChanged(true);
+  check(!lm->linkSelectorEnabled("Logic5", "Logic3"),
+        "Logic4, a member of C, pre-empts the audio into Logic3");
+  lg[3]->squelchStateChanged(false);
+  teardownN(lg, 5);
+}
+
 // Bad AUDIO_MODE should warn but fall back to FIRST (no mixer valves).
 void test_bad_audio_mode_falls_back(void)
 {
@@ -1431,6 +1685,10 @@ int main(void)
   test_priority_does_not_touch_unconnected_mixer_source();
   test_overlapping_first_and_mix();
   test_overlapping_activation_reconciles_mode();
+  test_implicit_connection_takes_strongest_mode();
+  test_implicit_priority_connection_preempts();
+  test_overlapping_links_parameters_follow_links_order();
+  test_implicit_connection_ignores_links_off_the_path();
   test_bad_audio_mode_falls_back();
   test_no_audio_mode_is_first();
 
