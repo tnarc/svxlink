@@ -333,6 +333,55 @@ def test_mutual_forward_rules_do_not_loop():
         h.cleanup()
 
 
+def test_core_command_stays_on_band_port():
+    """During a session, a '*' command dialled on the band port is a core
+    command of the band port itself. It must not be forwarded, so the users
+    of the band port cannot run the target logic's core commands."""
+    h = _make_harness()
+    try:
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
+                         window=2.5)
+        _assert(_module_active(h) is True, "module should be active after L1")
+        counts = h.count_tx_after(lambda: h.send_dtmf("Logic1", "*#"),
+                                  window=3.0)
+        _assert(counts["Logic1"] > 0,
+                "the band port did not run its own manual identification")
+        _assert(f'{TARGET}: Ignoring command' not in h.read_log(),
+                "the '*' command should not have reached the target at all")
+        # No new state event: the module was not deactivated
+        _assert(_module_active(h) is not False,
+                "the forwarded module was deactivated by the '*' command")
+    finally:
+        h.cleanup()
+
+
+def test_core_command_refused_on_target_without_hash():
+    """The band port only recognises the start of a '*' command after a '#'.
+    A command it cannot delimit, here an anti-flutter command (A ... C), is
+    forwarded as it is. The target must still refuse to run a core command
+    that was put together from forwarded digits."""
+    h = _make_harness()
+    try:
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
+                         window=2.5)
+        _assert(_module_active(h) is True, "module should be active after L1")
+        counts = h.count_tx_after(lambda: h.send_dtmf("Logic1", "A*C"),
+                                  window=3.0)
+        _assert(_wait_log(h, f'{TARGET}: Ignoring command "*" received '
+                             f'through a forwarding session'),
+                "the target ran (or did not see) a core command that was put "
+                "together from forwarded digits")
+        _assert(counts[TARGET] == 0,
+                "the target transmitted (manual identification?) after a "
+                "forwarded core command")
+        # The session itself keeps working: deactivate the module with '#'
+        h.count_tx_after(lambda: h.send_dtmf("Logic1", "#"), window=2.5)
+        _assert(_module_active(h) is False,
+                "the forwarded '#' did not deactivate the module")
+    finally:
+        h.cleanup()
+
+
 TESTS = [
     test_forward_activates_module_on_target,
     test_second_port_gets_busy,
@@ -341,6 +390,8 @@ TESTS = [
     test_session_ends_when_link_dropped,
     test_module_freed_while_unlinked_is_free_after_relink,
     test_mutual_forward_rules_do_not_loop,
+    test_core_command_stays_on_band_port,
+    test_core_command_refused_on_target_without_hash,
 ]
 
 

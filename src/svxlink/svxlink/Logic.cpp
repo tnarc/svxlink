@@ -1153,9 +1153,7 @@ void Logic::dtmfDigitDetected(char digit, int duration)
       {
           // Mark the target so a forwarded inject can never be re-forwarded
           // (loop guard), then deliver the digit to its own command path.
-        target->m_in_forwarded_inject = true;
-        target->injectDtmfDigit(digit, duration);
-        target->m_in_forwarded_inject = false;
+        injectForwardedDigit(target, digit, duration);
         return;
       }
       if (digit == '#')
@@ -1175,6 +1173,18 @@ void Logic::dtmfDigitDetected(char digit, int duration)
     {
       return;
     }
+  }
+
+    // Remember whether digits of the command that is being received came
+    // through a forwarding session (see forwardedCmdAllowed). A digit that
+    // starts a new command clears the mark.
+  if (m_in_forwarded_inject)
+  {
+    m_cur_cmd_fwd_id = m_forwarded_inject_cmd_id;
+  }
+  else if (dtmf_digit_handler->command().empty())
+  {
+    m_cur_cmd_fwd_id.clear();
   }
 
   dtmf_digit_handler->digitReceived(digit);
@@ -1416,12 +1426,11 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     // the target. Subsequent live command digits are forwarded individually
     // by dtmfDigitDetected, including the operator's own '#' terminators.
   std::string to_inject = cmd_id + sub + "#";
+  target->m_fwd_expected_activation = cmd_id + sub;
   s_fwd_in_progress.insert(this);
   for (unsigned i = 0; i < to_inject.size(); ++i)
   {
-    target->m_in_forwarded_inject = true;
-    target->injectDtmfDigit(to_inject[i], 100);
-    target->m_in_forwarded_inject = false;
+    injectForwardedDigit(target, to_inject[i], 100);
   }
   s_fwd_in_progress.erase(this);
 
@@ -1448,6 +1457,50 @@ bool Logic::forwardedModuleActiveOrPending(const std::string& cmd_id) const
   }
   return (active_module != 0) && (std::to_string(active_module->id()) == cmd_id);
 } /* Logic::forwardedModuleActiveOrPending */
+
+
+void Logic::injectForwardedDigit(Logic *target, char digit, int duration)
+{
+  target->m_in_forwarded_inject = true;
+  target->m_forwarded_inject_cmd_id = m_fwd_active_cmd_id;
+  target->injectDtmfDigit(digit, duration);
+  target->m_forwarded_inject_cmd_id.clear();
+  target->m_in_forwarded_inject = false;
+} /* Logic::injectForwardedDigit */
+
+
+bool Logic::forwardedCmdAllowed(const std::string& cmd,
+                                const std::string& fwd_cmd_id)
+{
+    // A command built from forwarded digits may only operate the forwarded
+    // module. The band port that forwards them only keeps '*' commands
+    // local when it can see where a command starts, which it cannot for
+    // commands that end without a '#' (anti-flutter mode, a timeout,
+    // EXEC_CMD_ON_SQL_CLOSE), so this is checked again here, where the
+    // command has been put together. Core commands, macros and anything
+    // that would reach another module are refused.
+  if (!cmd.empty() && (cmd[0] == '*'))
+  {
+    return false;
+  }
+  if (!m_macro_prefix.empty() &&
+      (cmd.compare(0, m_macro_prefix.size(), m_macro_prefix) == 0))
+  {
+    return false;
+  }
+  if (active_module != 0)
+  {
+    return std::to_string(active_module->id()) == fwd_cmd_id;
+  }
+    // No module is active: only the activation command that opened the
+    // session is accepted, once
+  if (!m_fwd_expected_activation.empty() && (cmd == m_fwd_expected_activation))
+  {
+    m_fwd_expected_activation.clear();
+    return true;
+  }
+  return false;
+} /* Logic::forwardedCmdAllowed */
 
 
 /****************************************************************************
@@ -1899,6 +1952,19 @@ void Logic::processCommandQueue(void)
   {
     string cmd(cmd_queue.front());
     cmd_queue.pop_front();
+    string fwd_id;
+    if (!cmd_queue_fwd_id.empty())
+    {
+      fwd_id = cmd_queue_fwd_id.front();
+      cmd_queue_fwd_id.pop_front();
+    }
+    if (!fwd_id.empty() && !forwardedCmdAllowed(cmd, fwd_id))
+    {
+      cout << name() << ": Ignoring command \"" << cmd << "\" received "
+           << "through a forwarding session for module command " << fwd_id
+           << endl;
+      continue;
+    }
 
     stringstream ss;
     ss << "dtmf_cmd_received \"" << cmd << "\"";
@@ -2049,9 +2115,12 @@ void Logic::putCmdOnQueue(void)
 {
   exec_cmd_on_sql_close_timer.setEnable(false);
 
+  const std::string fwd_id = m_cur_cmd_fwd_id;
+  m_cur_cmd_fwd_id.clear();
+
   if (!is_online)
   {
-    if (dtmf_digit_handler->command() == (online_cmd + "1"))
+    if (fwd_id.empty() && (dtmf_digit_handler->command() == (online_cmd + "1")))
     {
       setOnline(true);
     }
@@ -2063,6 +2132,7 @@ void Logic::putCmdOnQueue(void)
       (find(cmd_queue.begin(), cmd_queue.end(), "*") == cmd_queue.end()))
   {
     cmd_queue.push_back(received_digits);
+    cmd_queue_fwd_id.push_back(fwd_id);
   }
 
   dtmf_digit_handler->reset();

@@ -305,6 +305,10 @@ class Logic : public LogicBase
     std::list<Module*>	      	    modules;
     std::string       	      	    m_callsign;
     std::list<std::string>    	    cmd_queue;
+      // For each command in cmd_queue: the FORWARD_MODULE_CMD id of the
+      // forwarding session that delivered digits of it, or empty when all of
+      // its digits were received on this logic
+    std::list<std::string>          cmd_queue_fwd_id;
     Async::Timer      	      	    exec_cmd_on_sql_close_timer;
     Async::Timer      	      	    rgr_sound_timer;
     float       	      	    report_ctcss;
@@ -374,6 +378,13 @@ class Logic : public LogicBase
     bool                            m_fwd_local_cmd               {false};
       // Guard against forwarded injects bouncing back into forwarding.
     bool                            m_in_forwarded_inject         {false};
+      // Target side of a forwarding session: the module command id of the
+      // session that is injecting a digit right now, the session id that
+      // delivered digits of the command being received, and the activation
+      // command a session has asked for and that has not been processed yet
+    std::string                     m_forwarded_inject_cmd_id;
+    std::string                     m_cur_cmd_fwd_id;
+    std::string                     m_fwd_expected_activation;
       // The logics that are currently delivering a forwarded module command
       // to their target (FORWARD_MODULE_CMD loop detection)
     static std::set<const Logic*>   s_fwd_in_progress;
@@ -408,6 +419,9 @@ class Logic : public LogicBase
     void publishModuleState(Module *module, bool active);
     void endForwardingSession(void);
     bool forwardedModuleActiveOrPending(const std::string& cmd_id) const;
+    void injectForwardedDigit(Logic *target, char digit, int duration);
+    bool forwardedCmdAllowed(const std::string& cmd,
+                             const std::string& fwd_cmd_id);
     void cfgUpdated(const std::string& section, const std::string& tag);
     bool getConfigValue(const std::string& section, const std::string& tag,
                         std::string& value);
