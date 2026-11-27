@@ -14,6 +14,11 @@ every audio mode:
   * a module that mutes linking (MUTE_LOGIC_LINKING, e.g. Parrot) is activated
     on the sink logic while audio flows.
 
+The same is checked with PRIORITY_SOURCES set and with overlapping links
+(PRIORITY over MIX or FIRST on the same pair, and a PRIORITY + MIX chain via
+a third logic), where the mode of the connection into the sink is decided by
+more than one link and may change in the middle of the over.
+
 Logic1 is the sink, Logic2 the talker. Keyed/unkeyed is taken from the
 "Tx_Logic1: Turning the transmitter ON/OFF" log lines.
 
@@ -83,12 +88,16 @@ def _parrot_opts():
     )
 
 
-def _run(mode, action):
-    links = [LinkSpec("L", ["Logic1", "Logic2"], default_active=True,
-                      audio_mode=mode)]
+def _run(mode, action, links=None, num_logics=2, dtmf=("Logic1", "91#")):
+    """Logic2 talks into Logic1 and `action` happens mid-over: "none",
+    "deactivate" (send DTMF `dtmf` = (logic, digits)) or "module" (activate
+    Parrot on Logic1). `links` defaults to one link L of the given mode."""
+    if links is None:
+        links = [LinkSpec("L", ["Logic1", "Logic2"], default_active=True,
+                          audio_mode=mode)]
     extra = _parrot_opts() if action == "module" else {}
-    h = SvxlinkHarness(num_logics=2, logic_type="Simplex", links=links,
-                       logic_opts=NO_MUTE, **extra)
+    h = SvxlinkHarness(num_logics=num_logics, logic_type="Simplex",
+                       links=links, logic_opts=NO_MUTE, **extra)
     h.setup()
     h.start()
     try:
@@ -96,7 +105,7 @@ def _run(mode, action):
         time.sleep(1.5)
         _assert(_tx_keyed(h), f"{mode}: Logic1 should transmit the over")
         if action == "deactivate":
-            h.send_dtmf("Logic1", "91#")    # deactivate the link mid-over
+            h.send_dtmf(*dtmf)              # deactivate a link mid-over
         elif action == "module":
             h.send_dtmf("Logic1", "1#")     # activate Parrot mid-over
         time.sleep(1.0)
@@ -117,6 +126,64 @@ def _make(mode, action):
 
 
 TESTS = [_make(m, a) for a in ("none", "deactivate", "module") for m in MODES]
+
+
+# The same with PRIORITY_SOURCES and with links that overlap, so that the
+# mode of the connection from Logic2 into Logic1 is decided by more than one
+# link and may change in the middle of the over.
+def _pri(name, members, prefix, sources):
+    return LinkSpec(name, members, prefix=prefix, default_active=True,
+                    audio_mode="PRIORITY", priority_sources=sources)
+
+
+def _lnk(name, members, prefix, mode):
+    return LinkSpec(name, members, prefix=prefix, default_active=True,
+                    audio_mode=mode)
+
+
+SCENARIOS = {
+      # The talker is the priority source / only a sink of the PRIORITY link
+    "prisrc_talker": dict(links=[_pri("L", ["Logic1", "Logic2"], "91",
+                                      ["Logic2"])]),
+    "prisrc_sink": dict(links=[_pri("L", ["Logic1", "Logic2"], "91",
+                                    ["Logic1"])]),
+      # PRIORITY over MIX on the same pair; the PRIORITY link goes away
+    "pri_over_mix": dict(links=[_pri("P", ["Logic1", "Logic2"], "91",
+                                     ["Logic2"]),
+                                _lnk("M", ["Logic1", "Logic2"], "92", "MIX")]),
+      # PRIORITY over FIRST on the same pair: deactivating the PRIORITY link
+      # moves the connection from the mixer to the selector mid-over
+    "pri_over_first": dict(links=[_pri("P", ["Logic1", "Logic2"], "91",
+                                       ["Logic2"]),
+                                  _lnk("F", ["Logic1", "Logic2"], "92",
+                                       "FIRST")]),
+      # Logic2 only reaches Logic1 via Logic3 (PRIORITY + MIX chain); the MIX
+      # link into Logic1 goes away
+    "pri_mix_chain": dict(num_logics=3,
+                          links=[_pri("P", ["Logic2", "Logic3"], "92",
+                                      ["Logic2"]),
+                                 _lnk("M", ["Logic3", "Logic1"], "91",
+                                      "MIX")]),
+      # The same, but the PRIORITY link at the talker's end goes away
+    "pri_mix_chain_remote": dict(num_logics=3,
+                                 links=[_pri("P", ["Logic2", "Logic3"], "92",
+                                             ["Logic2"]),
+                                        _lnk("M", ["Logic3", "Logic1"], "91",
+                                             "MIX")],
+                                 dtmf=("Logic3", "92#")),
+}
+
+
+def _make_scenario(name, action):
+    def t():
+        _run(name, action, **SCENARIOS[name])
+    t.__name__ = f"test_{name}_{action}"
+    return t
+
+
+TESTS += [_make_scenario(n, a) for n in SCENARIOS
+          for a in ("none", "deactivate", "module")
+          if not (n == "pri_mix_chain_remote" and a != "deactivate")]
 
 
 def main():
