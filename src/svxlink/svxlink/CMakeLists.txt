@@ -143,6 +143,13 @@ add_test(NAME forward_module_cmd
   COMMAND ${CMAKE_COMMAND} -E env python3
           ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_forward_module_cmd.py)
 
+# Integration test: ANNOUNCE_ALL_REMOTE. A fake EchoLink directory and a remote
+# station on loopback (fixed ports 5198-5200) connect to ModuleEchoLink; checks
+# which logics broadcast the module's announcements.
+add_test(NAME announce_all_remote
+  COMMAND ${CMAKE_COMMAND} -E env python3
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/test_announce_all_remote.py)
+
 # Generate config file with correct paths
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/svxlink.conf.in
   ${CMAKE_CURRENT_BINARY_DIR}/svxlink.conf

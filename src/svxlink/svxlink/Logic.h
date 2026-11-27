@@ -210,7 +210,22 @@ class Logic : public LogicBase
      * frequencies can hear them. Typically toggled from the TCL event handlers
      * via the announceOnAllLogics helper.
      */
-    void setAnnounceOnAllLogics(bool enable) { m_announce_on_all_logics = enable; }
+    void setAnnounceOnAllLogics(bool enable);
+
+    /**
+     * @brief   Mark that a module is activating or deactivating itself
+     * @param   begin \em true before, \em false after the (de)activation
+     *
+     * A module does this e.g. when a remote EchoLink station connects or
+     * disconnects, on autoconnect or on its timeout, as opposed to a user
+     * activating or deactivating it with a DTMF command. Announcements that
+     * the module broadcasts meanwhile are only played on this logic unless
+     * ANNOUNCE_ALL_REMOTE is set.
+     */
+    void moduleSelfActivation(bool begin)
+    {
+      m_module_self_activation += begin ? 1 : -1;
+    }
 
     bool isWritingMessage(void);
     virtual void setOnline(bool online);
@@ -352,6 +367,10 @@ class Logic : public LogicBase
     float                           m_ctcss_to_tg_last_fq;
     std::string                     m_macro_prefix                {"D"};
     bool                            m_announce_on_all_logics      {false};
+      // ANNOUNCE_ALL_REMOTE, and the nesting depth of module (de)activations
+      // that the module itself started
+    bool                            m_announce_all_remote         {false};
+    int                             m_module_self_activation      {0};
     bool                            m_defer_sched_announcements   {false};
       // Default for SCHEDULED_ANNOUNCEMENT_MAX_DELAY in seconds
     static const int DEFAULT_SCHED_ANNOUNCEMENT_MAX_DELAY = 300;

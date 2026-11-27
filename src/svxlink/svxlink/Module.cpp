@@ -216,7 +216,10 @@ void Module::transmit(bool tx)
 
 bool Module::activateMe(void)
 {
-  return logic()->activateModule(this);
+  logic()->moduleSelfActivation(true);
+  bool activated = logic()->activateModule(this);
+  logic()->moduleSelfActivation(false);
+  return activated;
 } /* Module::activateMe */
 
 
@@ -224,7 +227,9 @@ void Module::deactivateMe(void)
 {
   if (m_is_active)
   {
+    logic()->moduleSelfActivation(true);
     logic()->deactivateModule(this);
+    logic()->moduleSelfActivation(false);
   }
 } /* Module::deactivateMe */
 

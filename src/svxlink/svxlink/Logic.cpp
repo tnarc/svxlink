@@ -466,6 +466,7 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
     // An explicit 0 means wait indefinitely.
   cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_DEFER",
                  m_defer_sched_announcements);
+  cfg().getValue(name(), "ANNOUNCE_ALL_REMOTE", m_announce_all_remote);
   m_sched_announcement_max_delay = DEFAULT_SCHED_ANNOUNCEMENT_MAX_DELAY;
   cfg().getValue(name(), "SCHEDULED_ANNOUNCEMENT_MAX_DELAY",
                  m_sched_announcement_max_delay);
@@ -1445,6 +1446,26 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     processEvent("command_failed " + cmd_id);
   }
 } /* Logic::forwardModuleCmd */
+
+
+void Logic::setAnnounceOnAllLogics(bool enable)
+{
+    // A module that activates or deactivates itself usually does so because
+    // of something a remote party did, e.g. an EchoLink station connecting.
+    // Broadcasting its announcement would let anyone who can do that key
+    // every transmitter, so only do it when ANNOUNCE_ALL_REMOTE is set.
+  if (enable && (m_module_self_activation > 0) && !m_announce_all_remote)
+  {
+    if (!m_announce_on_all_logics)
+    {
+      cout << name() << ": Not broadcasting an announcement for a module that "
+           << "activated or deactivated itself (ANNOUNCE_ALL_REMOTE=0)"
+           << endl;
+    }
+    enable = false;
+  }
+  m_announce_on_all_logics = enable;
+} /* Logic::setAnnounceOnAllLogics */
 
 
 bool Logic::forwardedModuleActiveOrPending(const std::string& cmd_id) const

@@ -535,6 +535,16 @@ announcements). The announcement still plays on the originating logic and on
 all other logic cores that have not set this variable. Useful to keep such
 announcements off, e.g., an EchoLink gateway or a remotely linked logic.
 Default: 0.
+.TP
+.B ANNOUNCE_ALL_REMOTE
+When set to 1, announcements that a module broadcasts via announceOnAllLogics
+while it activates or deactivates itself are broadcast too. A module does that
+because of something outside the logic core, for example the EchoLink module
+when a remote station connects or disconnects, on autoconnect, or when the
+module times out. With the default 0 such announcements are only played on
+this logic core, so that a remote party cannot make every transmitter key up.
+Activations and deactivations made with a DTMF command are broadcast either
+way. Default: 0.
 .
 .SS Simplex Logic Section
 .
