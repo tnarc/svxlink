@@ -1307,23 +1307,36 @@ void test_implicit_connection_ignores_links_off_the_path(void)
   teardownN(lg, 5);
 }
 
-// Bad AUDIO_MODE should warn but fall back to FIRST (no mixer valves).
+// Bad AUDIO_MODE should warn but fall back to FIRST (no mixer valves). The
+// value is case sensitive, so a lower case mode name is a bad value too.
 void test_bad_audio_mode_falls_back(void)
 {
   cout << "test_bad_audio_mode_falls_back" << endl;
-  Config cfg;
-  cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
-  cfg.setValue("L", "AUDIO_MODE", string("FOOBAR"));  // invalid
-  cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
-  FakeLogic* lg[3];
-  buildLinks(cfg, "L", lg);
-  LinkManager* lm = LinkManager::instance();
+  const char* bad_modes[] = {"FOOBAR", "mix"};
+  for (const char* bad_mode : bad_modes)
+  {
+    Config cfg;
+    cfg.setValue("L", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+    cfg.setValue("L", "AUDIO_MODE", string(bad_mode));  // invalid
+    cfg.setValue("L", "DEFAULT_ACTIVE", string("1"));
+    FakeLogic* lg[3];
+    std::ostringstream err;
+    std::streambuf* orig_cerr = std::cerr.rdbuf(err.rdbuf());
+    buildLinks(cfg, "L", lg);
+    std::cerr.rdbuf(orig_cerr);
+    LinkManager* lm = LinkManager::instance();
 
-  // Should behave as FIRST: no mixer valves open for second source
-  lg[0]->squelchStateChanged(true);
-  check(!lm->linkValveOpen("Logic2", "Logic1"),
-        "invalid AUDIO_MODE falls back to FIRST (valve closed)");
-  teardown(lg);
+    check(err.str().find(string("Unknown AUDIO_MODE \"") + bad_mode +
+                         "\" in link L") != string::npos,
+          string(bad_mode) + ": invalid AUDIO_MODE is warned about");
+      // Should behave as FIRST: no mixer valves open for second source
+    lg[0]->squelchStateChanged(true);
+    check(!lm->linkValveOpen("Logic2", "Logic1") &&
+          lm->linkSelectorEnabled("Logic2", "Logic1"),
+          string(bad_mode) + ": invalid AUDIO_MODE falls back to FIRST");
+    lg[0]->squelchStateChanged(false);
+    teardown(lg);
+  }
 }
 
 // No AUDIO_MODE at all must be exactly FIRST (backward compat).

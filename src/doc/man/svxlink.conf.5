@@ -1200,6 +1200,10 @@ where critical traffic must take precedence over normal traffic. If multiple
 priority sources transmit simultaneously, they are mixed together.
 .RE
 .IP
+The value is case sensitive. If AUDIO_MODE is set to any other value (e.g. a
+misspelled or lower case mode name), a warning is printed at startup and the
+link uses FIRST.
+.IP
 Example: AUDIO_MODE=PRIORITY
 .IP
 A connection between two logics may be created by more than one activated
