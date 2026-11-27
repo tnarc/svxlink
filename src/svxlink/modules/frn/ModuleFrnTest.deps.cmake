@@ -17,3 +17,12 @@ set(ModuleFrnTest_EXTRA_SRCS
 set(ModuleFrnTest_EXTRA_LIBS
   asynccpp asynccore asyncaudio svxmisc ${GSM_LIBRARY}
   )
+
+# Module.cpp is compiled in only so the ModuleFrn base class links; it is
+# not under test. With -fsanitize=undefined its vptr checks reference the
+# RTTI of Logic and Rx, whose key functions live in the svxlink executable
+# and the trx library, neither of which this test links. Turn just those
+# checks off for Module.cpp (a no-op without a sanitizer) so the test also
+# links in UBSan builds; ModuleFrn.cpp itself keeps full instrumentation.
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../../svxlink/Module.cpp
+  APPEND_STRING PROPERTY COMPILE_FLAGS " -fno-sanitize=vptr")
