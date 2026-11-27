@@ -1343,6 +1343,20 @@ void Logic::forwardModuleCmd(const std::string& cmd_id, const std::string& sub,
     return;
   }
 
+    // If the target has another module active, the activation command (and
+    // everything dialled after it) would be handled by that module, i.e. the
+    // digits would end up in whatever session is going on there. Treat the
+    // target as busy instead.
+  if ((target->active_module != 0) &&
+      (std::to_string(target->active_module->id()) != cmd_id))
+  {
+    std::cout << name() << ": Module command " << cmd_id << " cannot be "
+              << "forwarded to " << target_logic << " since another module "
+              << "is active there" << std::endl;
+    processEvent("command_failed " + cmd_id);
+    return;
+  }
+
     // Refuse to forward a command that is itself being forwarded to this
     // logic from a logic it would be forwarded back to, e.g. when A has
     // FORWARD_MODULE_CMD=2:B and B has 2:A. Without this, the activation

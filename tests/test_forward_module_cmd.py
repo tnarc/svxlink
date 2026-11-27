@@ -223,9 +223,20 @@ def test_session_not_left_open_when_target_busy():
 
         h.count_tx_after(lambda: h.send_dtmf("Logic1", MODULE_ID + "#"),
                          window=2.5)
-        _assert(_wait_log(h, "Logic1: Ending forwarding session to " + TARGET),
-                "Logic1 must not stay in a forwarding session when the target "
-                "did not activate the module")
+        # The command is refused before a session is opened, so that it is
+        # not handed to the module that is active on the target
+        _assert(_wait_log(h, f"Logic1: Module command {MODULE_ID} cannot be "
+                             f"forwarded to {TARGET}"),
+                "Logic1 must refuse to forward the command when the target "
+                "has another module active")
+        log = h.read_log()
+        _assert("Logic1: Forwarding module command" not in log,
+                "Logic1 must not open a forwarding session when the target "
+                "has another module active")
+        _assert("DTMF command received in module Help: " + MODULE_ID
+                not in log,
+                "the forwarded activation command must not be handed to the "
+                "module that is active on the target")
     finally:
         h.cleanup()
 
