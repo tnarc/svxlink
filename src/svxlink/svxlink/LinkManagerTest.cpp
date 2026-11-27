@@ -577,6 +577,131 @@ void test_hub_traffic_no_hangtime_mute(void)
   teardown(lg);
 }
 
+// PRIORITY_SOURCES: only the traffic of the listed members of a PRIORITY link
+// pre-empts other audio, the other members are only sinks. Logic3 is a hub in
+// a PRIORITY link with the alert source Logic1 and in a MIX link with Logic2.
+// Without PRIORITY_SOURCES (backward compatible), ordinary traffic on the hub
+// pre-empts Logic2's audio into Logic1, and arms the hangtime when the hub
+// unkeys. With PRIORITY_SOURCES=Logic1 it does neither, while traffic from
+// Logic1 still pre-empts Logic2's audio into the hub, hangtime included.
+void test_priority_sources_only_listed_preempt(void)
+{
+  cout << "test_priority_sources_only_listed_preempt" << endl;
+  for (int listed = 0; listed < 2; ++listed)
+  {
+    const string tag(listed ? "PRIORITY_SOURCES=Logic1: "
+                            : "PRIORITY_SOURCES unset: ");
+    Config cfg;
+    cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+    cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+    cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+    cfg.setValue("Pri", "PRIORITY_HANGTIME", string("300"));
+    cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+    if (listed)
+    {
+      cfg.setValue("Pri", "PRIORITY_SOURCES", string("Logic1"));
+    }
+    cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+    cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+    cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+    FakeLogic* lg[3];
+    buildLinks(cfg, "Pri,Norm", lg);
+    LinkManager* lm = LinkManager::instance();
+
+    check(lm->linkSelectorEnabled("Logic2", "Logic1"),
+          tag + "Logic2 reaches Logic1 before any traffic");
+
+      // Ordinary traffic on the hub
+    lg[2]->squelchStateChanged(true);
+    check(lm->linkSelectorEnabled("Logic2", "Logic1") == bool(listed),
+          tag + (listed ? "hub traffic does not pre-empt Logic2 into Logic1"
+                        : "hub traffic pre-empts Logic2 into Logic1"));
+    lg[2]->squelchStateChanged(false);
+    check(lm->linkSelectorEnabled("Logic2", "Logic1") == bool(listed),
+          tag + (listed ? "no hangtime after the hub unkeys"
+                        : "hangtime after the hub unkeys"));
+    lm->deactivateLinkByName("Pri");    // Reset any hangtime state
+    lm->activateLinkByName("Pri");
+
+      // Traffic from the alert source pre-empts in both cases
+    lg[0]->squelchStateChanged(true);
+    check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+          tag + "alert source traffic pre-empts Logic2 into the hub");
+    lg[0]->squelchStateChanged(false);
+    check(near_db(lm->linkGain("Logic2", "Logic3"), -30.0f),
+          tag + "hangtime after the alert source unkeys");
+    teardown(lg);
+  }
+}
+
+// PRIORITY_SOURCES is checked against CONNECT_LOGICS. Unknown logics are
+// warned about and ignored. A list without any valid member means that no
+// traffic on the link pre-empts (rather than falling back to all members).
+// The variable is ignored, with a warning, on a link that is not PRIORITY.
+void test_priority_sources_validation(void)
+{
+  cout << "test_priority_sources_validation" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_MUTE_DB", string("-30"));
+  cfg.setValue("Pri", "PRIORITY_SOURCES", string("Logic9"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Norm", "CONNECT_LOGICS", string("Logic2,Logic3"));
+  cfg.setValue("Norm", "AUDIO_MODE", string("MIX"));
+  cfg.setValue("Norm", "PRIORITY_SOURCES", string("Logic2"));
+  cfg.setValue("Norm", "DEFAULT_ACTIVE", string("1"));
+  FakeLogic* lg[3];
+  std::ostringstream err;
+  std::streambuf* orig_cerr = std::cerr.rdbuf(err.rdbuf());
+  buildLinks(cfg, "Pri,Norm", lg);
+  std::cerr.rdbuf(orig_cerr);
+  LinkManager* lm = LinkManager::instance();
+
+  check(err.str().find("\"Logic9\" in Pri/PRIORITY_SOURCES is not "
+                       "specified in Pri/CONNECT_LOGICS") != string::npos,
+        "an unknown logic in PRIORITY_SOURCES is warned about");
+  check(err.str().find("Pri/PRIORITY_SOURCES does not name any member") !=
+            string::npos,
+        "a PRIORITY_SOURCES without valid members is warned about");
+  check(err.str().find("Norm/PRIORITY_SOURCES is only used with "
+                       "AUDIO_MODE=PRIORITY") != string::npos,
+        "PRIORITY_SOURCES on a non-PRIORITY link is warned about");
+
+  lg[0]->squelchStateChanged(true);
+  check(near_db(lm->linkGain("Logic2", "Logic3"), 0.0f),
+        "no member pre-empts when PRIORITY_SOURCES names no member");
+  lg[0]->squelchStateChanged(false);
+  teardown(lg);
+}
+
+// Only the priority sources of a PRIORITY link need to report their activity,
+// so a member that cannot do so is only warned about if it is a listed
+// priority source.
+void test_priority_sources_limit_type_warning(void)
+{
+  cout << "test_priority_sources_limit_type_warning" << endl;
+  Config cfg;
+  cfg.setValue("Pri", "CONNECT_LOGICS", string("Logic1,Logic2,Logic3"));
+  cfg.setValue("Pri", "AUDIO_MODE", string("PRIORITY"));
+  cfg.setValue("Pri", "PRIORITY_SOURCES", string("Logic1,Logic2"));
+  cfg.setValue("Pri", "DEFAULT_ACTIVE", string("1"));
+  cfg.setValue("Logic2", "TYPE", string("Dummy"));
+  cfg.setValue("Logic3", "TYPE", string("Dummy"));
+  FakeLogic* lg[3];
+  std::ostringstream err;
+  std::streambuf* orig_cerr = std::cerr.rdbuf(err.rdbuf());
+  buildLinks(cfg, "Pri", lg);
+  std::cerr.rdbuf(orig_cerr);
+
+  check(err.str().find("member logic \"Logic2\" is TYPE=Dummy") !=
+            string::npos,
+        "a priority source that cannot report activity is warned about");
+  check(err.str().find("member logic \"Logic3\"") == string::npos,
+        "a member that is only a sink is not warned about");
+  teardown(lg);
+}
+
 // Deactivating a PRIORITY link while its hangtime timer is running must reset
 // the hangtime state: the held-muted sinks are restored and the timer stopped,
 // so reactivating the link does not resurrect a spurious mute from a frozen
@@ -1292,6 +1417,9 @@ int main(void)
   test_priority_hangtime_after_activation_while_keyed();
   test_muted_priority_source_does_not_preempt();
   test_hub_traffic_no_hangtime_mute();
+  test_priority_sources_only_listed_preempt();
+  test_priority_sources_validation();
+  test_priority_sources_limit_type_warning();
   test_priority_hangtime_reset_on_deactivate();
   test_announce_all_exclude();
   test_announce_scheduled_propagation();

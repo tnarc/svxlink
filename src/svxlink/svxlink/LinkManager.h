@@ -452,8 +452,8 @@ class LinkManager : public sigc::trackable
       Link(void)
         : default_active(false), is_activated(false), timeout_timer(0),
           audio_mode(LinkAudioMode::FIRST), duck_level_db(-12.0f),
-          priority_mute_db(-60.0f), priority_hangtime(0),
-          priority_hangtime_timer(0) {}
+          priority_mute_db(-60.0f), priority_sources_set(false),
+          priority_hangtime(0), priority_hangtime_timer(0) {}
       ~Link(void)
       {
         delete timeout_timer;
@@ -472,6 +472,10 @@ class LinkManager : public sigc::trackable
       LinkAudioMode audio_mode;
       float         duck_level_db;
       float         priority_mute_db;
+        // PRIORITY_SOURCES: the members whose traffic pre-empts other audio.
+        // When the variable is not set, every member is a priority source.
+      bool          priority_sources_set;
+      StrSet        priority_sources;
       int           priority_hangtime;        // Hangtime in ms (0 = disabled)
       Async::Timer  *priority_hangtime_timer; // Active during priority hangtime
         // The sinks (members of this link) into which a priority source was
@@ -480,6 +484,18 @@ class LinkManager : public sigc::trackable
         // add that member to the set, so it does not arm hangtime muting of its
         // own incoming audio.
       std::set<std::string> priority_active_sinks;
+
+        // Check if traffic from the given member logic pre-empts other audio
+        // when this is a PRIORITY link (see PRIORITY_SOURCES)
+      bool isPrioritySource(const std::string& logic_name) const
+      {
+        if (logic_props.count(logic_name) == 0)
+        {
+          return false;
+        }
+        return !priority_sources_set ||
+               (priority_sources.count(logic_name) > 0);
+      }
     };
     typedef std::map<std::string, Link> LinkMap;
     typedef std::set<std::pair<std::string, std::string> > LogicConSet;

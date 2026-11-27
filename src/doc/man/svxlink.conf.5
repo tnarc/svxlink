@@ -1191,11 +1191,13 @@ squelch is open. This allows local traffic to be heard clearly at full volume
 while still being aware of remote activity at a reduced level. Use DUCK_LEVEL_DB
 to configure the amount of reduction.
 .IP PRIORITY 10
-Like MIX mode, but when a source from a PRIORITY link is transmitting, sources
-from non-PRIORITY links are reduced to PRIORITY_MUTE_DB level (near silence by
-default). This is useful for emergency broadcast systems where critical traffic
-must take precedence over normal traffic. If multiple PRIORITY sources transmit
-simultaneously, they are mixed together.
+Like MIX mode, but when a priority source of a PRIORITY link is transmitting,
+all other sources into the logics receiving the priority traffic are reduced to
+PRIORITY_MUTE_DB level (near silence by default). By default every member of
+the link is a priority source. Use PRIORITY_SOURCES to make only some of the
+members pre-empt other traffic. This is useful for emergency broadcast systems
+where critical traffic must take precedence over normal traffic. If multiple
+priority sources transmit simultaneously, they are mixed together.
 .RE
 .IP
 Example: AUDIO_MODE=PRIORITY
@@ -1207,7 +1209,8 @@ TYPE=Reflector, TYPE=ReflectorV2 or TYPE=Dummy) never reports a local squelch
 state, so including one of those in a DUCK or PRIORITY link will never
 trigger ducking/preemption based on that member's own traffic (a warning is
 printed at startup if this is detected). The other, Logic-based, members of the same
-link are unaffected and continue to work normally.
+link are unaffected and continue to work normally. In a PRIORITY link, only the
+priority sources (see PRIORITY_SOURCES) need to report their traffic.
 .TP
 .B DUCK_LEVEL_DB
 The amount of gain reduction (in dB) to apply to incoming link audio when
@@ -1223,9 +1226,28 @@ near-silence. Default is -60.
 .IP
 Example: PRIORITY_MUTE_DB=-40
 .TP
+.B PRIORITY_SOURCES
+A comma separated list of the member logics of a PRIORITY link whose traffic
+pre-empts other audio. The other members of the link are only sinks: they
+receive the priority traffic, but their own traffic is handled like MIX
+traffic and never pre-empts anything. A typical use is a PRIORITY link between
+an alert source and a hub logic that is also linked to other logics in a MIX
+link. Without PRIORITY_SOURCES, ordinary traffic on the hub would also pre-empt
+the other audio sent to the alert source logic.
+.IP
+If PRIORITY_SOURCES is not set, every member of the link is a priority source.
+This is the behaviour of earlier versions of SvxLink, so existing
+configurations work unchanged. A logic that is not specified in CONNECT_LOGICS
+is ignored with a warning. If none of the listed logics is a member of the
+link, a warning is printed and no traffic on the link pre-empts other audio.
+PRIORITY_SOURCES is ignored, with a warning, if AUDIO_MODE is not PRIORITY.
+.IP
+Example: PRIORITY_SOURCES=AlertLogic
+.TP
 .B PRIORITY_HANGTIME
-The time in milliseconds that priority preemption continues after a PRIORITY
-source stops transmitting. This prevents non-priority sources from briefly
+The time in milliseconds that priority preemption continues after a priority
+source (see PRIORITY_SOURCES) stops transmitting. Only the traffic of a
+priority source starts the hangtime. This prevents non-priority sources from briefly
 interrupting between priority transmissions. During hangtime, non-priority
 sources remain muted. Default is 0 (no hangtime, preemption ends immediately).
 .IP

@@ -152,6 +152,44 @@ def test_priority_with_hangtime_still_preempts():
                 f"measured {_db(muted / before):.1f} dB")
 
 
+def _hub_traffic_level_change(priority_sources):
+    """Logic3 is a hub in a PRIORITY link with the alert source Logic1 and in a
+    MIX link with Logic2. Return the level of Logic2's tone at Logic1 before
+    and while ordinary traffic is received by the hub."""
+    import time
+    links = [
+        LinkSpec("Pri", ["Logic1", "Logic3"], prefix="91", default_active=True,
+                 audio_mode="PRIORITY", priority_mute_db=-20,
+                 priority_sources=priority_sources),
+        LinkSpec("Norm", ["Logic2", "Logic3"], prefix="92", default_active=True,
+                 audio_mode="MIX"),
+    ]
+    with _harness(links) as h:
+        h.start_talk("Logic2", F2)
+        time.sleep(1.0)
+        before = h.tone_level("Logic1", F2)
+        h.start_talk("Logic3", FLOCAL)           # ordinary traffic on the hub
+        time.sleep(1.0)
+        during = h.tone_level("Logic1", F2)
+        return before, during
+
+
+def test_priority_sources_hub_traffic_does_not_preempt():
+    """PRIORITY_SOURCES: traffic on a member that is not a listed priority
+    source does not pre-empt other audio. Without PRIORITY_SOURCES (all members
+    are priority sources) it does."""
+    before, during = _hub_traffic_level_change(["Logic1"])
+    _assert(before > 800, f"Logic2 should be heard at Logic1, got {before:.0f}")
+    _assert(_db(during / before) > -3,
+            f"hub traffic must not pre-empt with PRIORITY_SOURCES=Logic1, "
+            f"measured {_db(during / before):.1f} dB")
+    before, during = _hub_traffic_level_change(None)
+    _assert(before > 800, f"Logic2 should be heard at Logic1, got {before:.0f}")
+    _assert(_db(during / before) < -14,
+            f"hub traffic should pre-empt without PRIORITY_SOURCES, "
+            f"measured {_db(during / before):.1f} dB")
+
+
 def _close_squelch(h, logic, freq, timeout=8.0):
     """Drive the logic's VOX squelch closed by streaming near-silence until the
     log reports the close (a Local UDP RX never re-evaluates VOX to silence
@@ -219,6 +257,7 @@ TESTS = [
     test_duck_reduces_incoming_when_local_squelch_opens,
     test_priority_mutes_nonpriority_sources,
     test_priority_with_hangtime_still_preempts,
+    test_priority_sources_hub_traffic_does_not_preempt,
 ]
 
 

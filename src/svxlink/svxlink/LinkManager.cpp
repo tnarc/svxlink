@@ -376,6 +376,41 @@ bool LinkManager::initialize(Async::Config &cfg,
       }
     }
 
+      // Parse PRIORITY_SOURCES configuration (default: all members). Only
+      // traffic from the listed members pre-empts other audio. The other
+      // members of the link only act as sinks for the priority traffic.
+    std::string priority_sources_str;
+    if (cfg.getValue(link.name, "PRIORITY_SOURCES", priority_sources_str))
+    {
+      link.priority_sources_set = true;
+      std::vector<std::string> priority_sources;
+      SvxLink::splitStr(priority_sources, priority_sources_str, ",");
+      for (const auto& logic_name : priority_sources)
+      {
+        if (link.logic_props.count(logic_name) == 0)
+        {
+          std::cerr << "*** WARNING: Logic \"" << logic_name
+                    << "\" in " << link.name << "/PRIORITY_SOURCES is not "
+                       "specified in " << link.name << "/CONNECT_LOGICS. "
+                       "Ignoring it." << std::endl;
+          continue;
+        }
+        link.priority_sources.insert(logic_name);
+      }
+      if (link.audio_mode != LinkAudioMode::PRIORITY)
+      {
+        std::cerr << "*** WARNING: " << link.name << "/PRIORITY_SOURCES is "
+                     "only used with AUDIO_MODE=PRIORITY. Ignoring it."
+                  << std::endl;
+      }
+      else if (link.priority_sources.empty())
+      {
+        std::cerr << "*** WARNING: " << link.name << "/PRIORITY_SOURCES "
+                     "does not name any member of the link, so no traffic on "
+                     "the link will pre-empt other audio." << std::endl;
+      }
+    }
+
       // DUCK and PRIORITY both key off a member logic's local squelch state
       // (LogicBase::squelchStateChanged), which is only ever emitted by the
       // Logic base class (Simplex/Repeater logics). Every other logic core
@@ -390,6 +425,13 @@ bool LinkManager::initialize(Async::Config &cfg,
       for (const auto& logic_prop : link.logic_props)
       {
         const std::string& logic_name = logic_prop.first;
+          // In a PRIORITY link, only the traffic of the priority sources
+          // matters. The other members are only sinks.
+        if ((link.audio_mode == LinkAudioMode::PRIORITY) &&
+            !link.isPrioritySource(logic_name))
+        {
+          continue;
+        }
         std::string logic_type;
         cfg.getValue(logic_name, "TYPE", logic_type);
         if ((logic_type != "Simplex") && (logic_type != "Repeater"))
@@ -1920,14 +1962,15 @@ float LinkManager::getEffectiveDuckLevel(const std::string& src_name,
 bool LinkManager::isSourceFromPriorityLink(const std::string& src_name,
                                             const std::string& sink_name)
 {
-    // Check if this source-sink pair is in a PRIORITY mode link
+    // Check if this source is a priority source (PRIORITY_SOURCES) of an
+    // activated PRIORITY link that also includes the sink
   for (const auto& link_pair : links)
   {
     const Link& link = link_pair.second;
     if (!link.is_activated) continue;
     if (link.audio_mode != LinkAudioMode::PRIORITY) continue;
 
-    if (link.logic_props.count(src_name) > 0 &&
+    if (link.isPrioritySource(src_name) &&
         link.logic_props.count(sink_name) > 0)
     {
       return true;
@@ -2117,6 +2160,8 @@ void LinkManager::checkPriorityHangtime(void)
       {
         const std::string& src_name = src_prop.first;
         if (src_name == sink_name) continue;
+          // Only the traffic of a priority source arms the hangtime
+        if (!link.isPrioritySource(src_name)) continue;
           // Same rule as in isPrioritySourceActive: only a source with an
           // established connection into the sink counts
         if (current_cons.count(std::make_pair(src_name, sink_name)) == 0)

@@ -90,7 +90,7 @@ class LinkSpec:
 
     def __init__(self, name, members, prefix="91", default_active=True,
                  audio_mode=None, duck_level_db=None, priority_mute_db=None,
-                 priority_hangtime=None):
+                 priority_hangtime=None, priority_sources=None):
         self.name = name
         self.members = members
         self.prefix = prefix
@@ -99,6 +99,8 @@ class LinkSpec:
         self.duck_level_db = duck_level_db
         self.priority_mute_db = priority_mute_db
         self.priority_hangtime = priority_hangtime
+        # List of member names for PRIORITY_SOURCES (None = not set)
+        self.priority_sources = priority_sources
 
     def render(self):
         connect = ",".join(f"{m}:{self.prefix}:{m}" for m in self.members)
@@ -112,6 +114,8 @@ class LinkSpec:
             out.append(f"PRIORITY_MUTE_DB={self.priority_mute_db}")
         if self.priority_hangtime is not None:
             out.append(f"PRIORITY_HANGTIME={self.priority_hangtime}")
+        if self.priority_sources is not None:
+            out.append("PRIORITY_SOURCES=" + ",".join(self.priority_sources))
         out.append("")
         return out
 
