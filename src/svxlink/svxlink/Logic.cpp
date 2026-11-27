@@ -47,6 +47,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <cctype>
 #include <cassert>
 #include <sstream>
+#include <limits>
 #include <map>
 #include <list>
 #include <vector>
@@ -471,6 +472,17 @@ bool Logic::initialize(Async::Config& cfgobj, const std::string& logic_name)
   if (m_sched_announcement_max_delay < 0)
   {
     m_sched_announcement_max_delay = 0;
+  }
+    // The delay is used as a timer value in milliseconds, which must fit
+    // in an int
+  const int max_sched_announcement_max_delay =
+      std::numeric_limits<int>::max() / 1000;
+  if (m_sched_announcement_max_delay > max_sched_announcement_max_delay)
+  {
+    cerr << "*** WARNING: " << name() << "/SCHEDULED_ANNOUNCEMENT_MAX_DELAY "
+         << "is too large. Using " << max_sched_announcement_max_delay
+         << " seconds. Use 0 to wait indefinitely.\n";
+    m_sched_announcement_max_delay = max_sched_announcement_max_delay;
   }
 
   AudioSource *prev_rx_src = 0;
